@@ -55,6 +55,7 @@
 - 一期不采用“`regenerate` 创建子 session”方案
 - 一期采用“单 session 内，某个 assistant 回复组挂多个候选结果”的方案
 - `retry` 与 `regenerate` 的差异不再体现在是否创建子 session，而体现在“覆盖旧结果”还是“保留多个候选结果”
+- 但对于长会话 compression，可单独引入基于 `parent_session_id` 的 continuation / lineage 方案，其语义与 `regenerate` 解耦
 
 也就是说：
 
@@ -68,23 +69,26 @@
 
 需要同步理解的是：
 
-- 当前 `02-后端最小落地架构.md`、`03-数据库设计草案.md` 与本文应统一按“单 session + assistant 回复组候选集”的方案理解
+- 当前 `02-后端最小落地架构.md`、`03-数据库设计草案.md` 与本文应统一按“regenerate 采用单 session + assistant 回复组候选集；compression 允许采用 continuation lineage”的方案理解
 - 一期 `regenerate` 的核心语义已经统一收口到 `messages.response_group_id`、`is_current_response`、`response_locked_at` 等字段，而不是放在 `sessions` 分支字段上
-- 如果后续继续细化数据库 DDL，应优先把候选结果语义补到 `messages` 侧，而不是继续强化 `sessions` 分支字段
+- 如果后续继续细化数据库 DDL，应优先把候选结果语义补到 `messages` 侧；而 `sessions.parent_session_id` 只为 compression continuation / lineage 服务
 
 ## 总体思路
 
-一期采用“单 session 主链 + assistant 回复组候选集”的模型，而不是“主 session + 子 session 分支树”的模型。
+一期采用“regenerate 走单 session 主链 + assistant 回复组候选集；compression 走 continuation lineage”的混合模型。
 
 具体来说：
 
 - 一个 `session` 表示一段完整会话的元数据容器
+- 一个逻辑会话由一个 root session 和若干 continuation session 组成
 - `messages` 表保存该会话内所有消息，包括主链消息、候选 assistant 消息、tool 调用消息、tool 结果消息
 - 主链消息按 `sequence_no` 严格递增排列，是用户默认阅读到的消息骨架
 - 某一条 assistant 主结果可以拥有多个候选结果
 - 候选结果不进入主链默认展示，但保留独立查看能力
 - 每个 assistant 回复组始终有且仅有一个主结果
 - 当用户基于某个候选结果继续发言时，该候选立即转正为主结果，并锁定该回复组，不再允许切换主结果
+- 当会话过长触发正式 compression 时，可创建一个新的 continuation session，并通过 `parent_session_id` 指向父 session
+- 所有 continuation session 共享同一个 `root_session_id`，前端按 `root_session_id` 聚合为一个连续会话框
 
 这样做的目的：
 
@@ -92,6 +96,7 @@
 - 保持 `retry` 与 `regenerate` 的用户心智接近
 - 保持 `session` 模块对消息主骨架的解释成本可控
 - 为前端提供“主链查看 + 候选详情查看”的清晰接口模型
+- 同时保留长会话 lineage、回溯与跨 session 精准检索能力
 
 ## 模块职责边界
 
@@ -111,6 +116,7 @@
 - 执行最近回复组的 `regenerate` 候选追加与主结果切换
 - 维护 `sessions.message_count`、`tool_call_count`、`input_tokens`、`output_tokens`、`last_message_at`
 - 统一管理 `session_summaries` 的写入
+- 维护 root session、continuation session 与当前 tip session 的关联
 - 提供标题更新与标题生成入口
 
 `session` 模块不负责：
@@ -170,6 +176,8 @@ backend/
 
 - `id`
 - `user_id`
+- `parent_session_id`
+- `root_session_id`
 - `title`
 - `status`
 - `active_model_provider`
@@ -184,7 +192,6 @@ backend/
 
 本方案中，一期不再使用以下字段：
 
-- `parent_session_id`
 - `branch_point_message_id`
 - `branch_status`
 - `is_listed_in_session_list`
@@ -195,6 +202,23 @@ backend/
 - 一期不再用子 session 表达 `regenerate`
 - 这些字段不再承担一期候选结果语义的核心职责
 - 一期 assistant 回复组与候选结果改由 `messages` 侧建模，不再由 `sessions` 分支字段表达
+
+其中，`parent_session_id` 建议重新引入，但语义严格限定为：
+
+- 仅服务 compression continuation / lineage
+- 不服务 `retry/regenerate`
+- 不表达候选结果切换
+
+同时建议引入：
+
+- `root_session_id`
+
+其语义是：
+
+- 标识同一个逻辑会话的起点
+- root session 自己的 `root_session_id = id`
+- 所有 continuation session 继承相同 `root_session_id`
+- 前端会话框、会话列表聚合、当前 tip 定位都优先基于 `root_session_id`
 
 ### Message
 
@@ -328,6 +352,107 @@ backend/
 - 候选详情可以稳定还原各自的 tool 过程
 - 主链与候选链路的 tool 归属清晰
 
+### 5. compression continuation
+
+当单个 session 历史过长，正式触发 compression 时，建议：
+
+- 由 `CompressionService` 生成一条 `compression_summary`
+- 通过 `SessionService` 持久化该摘要
+- 创建一个新的 continuation session
+- 新 session 的 `parent_session_id` 指向被压缩的父 session
+- 新 session 继承父 session 的 `root_session_id`
+- continuation session 以压缩摘要和保留尾部消息作为新的运行起点
+
+这里要明确区分：
+
+- 这是 session continuation，不是 regenerate candidate
+- continuation session 的目的是承接长会话运行，而不是表达同一回复位置的多个候选答案
+
+这样做的价值是：
+
+- 长会话回溯性更强
+- 更利于沿 lineage 做跨 session recall 和精准检索
+- 压缩前后的边界更清晰
+
+为什么不仅要有 `parent_session_id`，还要给 `compression_summary` 补结构字段：
+
+- 仅有 `parent_session_id` 只能说明“这个 session 接在那个 session 后面”。
+- 但它无法说明“压缩时到底压掉了父 session 的哪一段消息”。
+- 也无法说明“哪些最后几轮消息作为 tail 被原样带到了 continuation session”。
+- 更无法稳定建立“这一个 continuation session 对应哪一条 compression summary”的双向关系。
+
+因此建议 `compression_summary` 至少记录：
+
+- `source_session_id`
+- `target_session_id`
+- `source_message_range_start`
+- `source_message_range_end`
+- `tail_preserved_from_seq`
+
+这些字段的价值不是为了展示更多元数据，而是为了：
+
+- 让 lineage 调试、跨 session recall、会话拼接和压缩点审计真正可做
+- 让后续代码能精确知道“summary 覆盖区”和“tail 保留区”的边界
+
+### 6. root session、tip session 与消息拼接
+
+为了让“底层多个物理 session、前端一个会话框”成立，建议明确三个概念：
+
+- `root session`：整条逻辑会话的起点 session
+- `continuation session`：compression 产生的后续物理 session
+- `tip session`：当前仍在继续写入消息的最新 session
+
+推荐规则：
+
+- root session 的 `root_session_id = id`
+- continuation session 的 `root_session_id = root.id`
+- continuation session 的 `parent_session_id = 上一个物理 session.id`
+- 当前对话输入总是写入 tip session
+- 会话列表默认按 `root_session_id` 聚合，只显示一个逻辑会话卡片
+
+消息拼接建议：
+
+- 查询当前会话框时，不按单个 `session_id` 读取
+- 而是先按 `root_session_id` 找到整条 lineage 上的所有物理 session
+- 再按 continuation 顺序拼接每个物理 session 的主链消息
+- 候选结果仍然只在各自物理 session 内，通过 `response_group_id` 解释
+- 当前继续聊天时，先根据 `root_session_id` 解析 tip session，再把新消息写入 tip session
+
+也就是说：
+
+- `parent_session_id` 解决“这一段接在上一段后面”
+- `root_session_id` 解决“这些段本质上属于同一个会话框”
+
+### 7. compression continuation 时序
+
+建议把 compression continuation 的主流程正式收口为：
+
+1. `CompressionService` 判断当前 tip session 已达到压缩阈值
+2. 读取当前 tip session 的完整主链消息
+3. 计算压缩边界：
+   - 保护 head
+   - 保护 tail
+   - 中间区域作为 summary 覆盖区
+4. 生成一条 `compression_summary`
+5. 通过 `SessionService.save_compression_summary(...)` 持久化该摘要，并写明：
+   - `source_session_id`
+   - `source_message_range_start`
+   - `source_message_range_end`
+   - `tail_preserved_from_seq`
+6. `SessionService.create_compression_continuation(...)` 创建新的 continuation session：
+   - `parent_session_id = 旧 tip session.id`
+   - `root_session_id = 旧 tip session.root_session_id`
+7. 将刚生成的 `compression_summary.target_session_id` 回填为新 continuation session.id
+8. 把父 session 的保留 tail 复制或投影到 continuation session 的初始上下文中
+9. 将当前逻辑会话的活跃写入位置切换到新 tip session
+10. 用户下一条消息开始写入新的 tip session，但前端仍停留在同一个会话框
+
+需要明确：
+
+- 被压缩的是父 tip session 内的可压缩中段，而不是整条逻辑会话的所有历史
+- continuation session 不是“只拿一条 summary 空启动”
+- continuation session 的起点应为“compression summary + 保留 tail”
+
 ## 数据建模建议
 
 ### 为什么现有 `messages` 字段还不够
@@ -393,13 +518,14 @@ backend/
 
 返回粒度：
 
-- 只返回主会话元数据列表
+- 返回逻辑会话列表，而不是所有物理 session 列表
 - 不返回完整消息历史
 - 不返回候选详情
 
 建议字段：
 
-- `session_id`
+- `root_session_id`
+- `tip_session_id`
 - `title`
 - `status`
 - `active_model_provider`
@@ -412,7 +538,12 @@ backend/
 
 用途：
 
-- 返回单个会话的元数据
+- 返回单个逻辑会话的元数据
+
+参数语义建议：
+
+- 路由中的 `{session_id}` 一期按逻辑会话 ID 解释，也就是 `root_session_id`
+- 物理 continuation session 的 `id` 不作为前端会话框主键直接暴露
 
 已确认收口：
 
@@ -421,7 +552,8 @@ backend/
 
 建议字段：
 
-- `session_id`
+- `root_session_id`
+- `tip_session_id`
 - `title`
 - `status`
 - `active_model_provider`
@@ -438,11 +570,16 @@ backend/
 
 用途：
 
-- 返回该 session 的主链消息
+- 返回该逻辑会话的聚合主链消息
+
+参数语义建议：
+
+- 路由中的 `{session_id}` 一期同样按 `root_session_id` 解释
 
 返回规则：
 
-- 主链消息按 `sequence_no` 正序分页返回
+- 先按 `root_session_id` 找整条 lineage
+- 再按物理 session 顺序和各自 `sequence_no` 正序分页返回
 - 默认返回主链消息 + 候选摘要
 - 不直接展开候选消息全文
 - 不直接展开候选工具轨迹
@@ -495,8 +632,12 @@ backend/
 
 - `create_session(user_id, model_route) -> Session`
 - `get_session(user_id, session_id) -> Session`
+- `get_root_session(user_id, root_session_id) -> Session`
+- `get_tip_session(user_id, root_session_id) -> Session`
 - `list_sessions(user_id, page) -> SessionList`
+- `list_lineage_sessions(user_id, root_session_id) -> SessionList`
 - `list_session_messages(user_id, session_id, cursor) -> MessagePage`
+- `list_conversation_messages(user_id, root_session_id, cursor) -> MessagePage`
 - `list_message_candidates(user_id, session_id, message_id) -> CandidateList`
 - `append_user_message(...) -> Message`
 - `append_assistant_message(...) -> Message`
@@ -505,15 +646,19 @@ backend/
 - `overwrite_last_assistant_message_for_retry(...) -> Message`
 - `append_regenerate_candidate(...) -> Message`
 - `select_candidate_and_lock_on_continue(...) -> None`
-- `rename_session(user_id, session_id, title) -> Session`
-- `update_session_title(user_id, session_id, title) -> Session`
-- `generate_session_title_input(session_id) -> TitleContext`
+- `rename_session(user_id, root_session_id, title) -> Session`
+- `update_session_title(user_id, root_session_id, title) -> Session`
+- `generate_session_title_input(root_session_id) -> TitleContext`
 - `save_session_summary(...) -> SessionSummary`
 - `save_compression_summary(...) -> SessionSummary`
+- `create_compression_continuation(...) -> Session`
+- `resolve_root_session_id(session_id) -> SessionId`
+- `attach_compression_summary_target(summary_id, target_session_id) -> None`
 - `rebuild_session_aggregates(session_id) -> None`
 
 说明：
 
+- 这里未显式带 `root_` 前缀的方法，默认用于物理 session 内部操作；带 `root_session_id` 的方法用于逻辑会话聚合语义。
 - `generate_session_title_input` 只是为标题生成提供入口或上下文，不要求 `session` 模块内部直接调用大模型
 - 标题真正生成可由后续 `chat` 或 `agent` 编排链路调用后再回写
 
@@ -692,15 +837,17 @@ backend/
 为了尽快落地，建议按下面顺序开发：
 
 1. 完成 `SessionRepository` 的会话与消息基础查询能力
-2. 完成 `SessionService` 的创建会话、读取会话、重命名能力
-3. 完成用户消息、assistant 消息、tool 消息的渐进写入能力
-4. 完成 `sequence_no` 分配与聚合字段维护
-5. 完成 `/sessions/{session_id}` 与 `/messages` 分离读取接口
-6. 完成候选回复组的归组字段与唯一主结果约束
-7. 完成候选详情接口
-8. 完成最近回复组的 `retry` 覆盖语义
-9. 完成最近回复组的 `regenerate` 与锁定语义
-10. 完成 `session_summaries` 统一写入入口
+2. 完成 root session / tip session 解析能力，以及逻辑会话聚合查询能力
+3. 完成 `SessionService` 的创建会话、读取会话、重命名能力
+4. 完成用户消息、assistant 消息、tool 消息的渐进写入能力
+5. 完成 `sequence_no` 分配与聚合字段维护
+6. 完成 `/sessions/{session_id}` 与 `/messages` 分离读取接口
+7. 完成候选回复组的归组字段与唯一主结果约束
+8. 完成候选详情接口
+9. 完成最近回复组的 `retry` 覆盖语义
+10. 完成最近回复组的 `regenerate` 与锁定语义
+11. 完成 `session_summaries` 统一写入入口
+12. 完成 compression continuation、tail 保留与 tip 切换逻辑
 
 ## 本方案的最终收口
 
@@ -709,20 +856,25 @@ backend/
 - 使用 `session` 模块承载会话、消息、摘要的真源边界
 - 一期不采用 `regenerate` 创建子 session 的方案
 - 一期采用“单 session + assistant 回复组多候选”方案
+- 一期可对 compression 单独采用 `parent_session_id` continuation / lineage 方案
 - `retry` 仅作用于最近一个 assistant 主结果，并做真正物理覆盖
 - `regenerate` 仅作用于最近一个 assistant 回复组，并保留多个候选结果
 - 同一回复组始终只有一个主结果
 - 用户基于候选继续发言时，该候选立即转正并锁定回复组
 - `messages` 表统一承载用户消息、assistant 消息、tool 消息与候选结果
 - 主消息接口返回主链消息与候选轻摘要，候选详情通过单独接口读取
+- 主会话框读取建议按 `root_session_id` 聚合整条 lineage，而不是只读单个物理 `session_id`
 - `GET /sessions/{session_id}` 仅返回 session 元数据
 - `GET /sessions/{session_id}/messages` 一期即支持分页
 - `session_summaries` 由 `SessionService` 统一写入与管理
+- `parent_session_id` 只承接 compression continuation / lineage，不承接 `regenerate` 候选语义
+- `root_session_id` 作为整个逻辑会话的稳定标识，承接“一个会话框下多个 continuation session”的聚合语义
 - 标题生成能力在 `session` 模块预留入口，但模型调用由上游编排决定
 
 这套设计满足你当前的一期目标：
 
 - 比子 session 分支树更轻
 - 比完全覆盖式消息流更能保留 regenerate 候选体验
+- 比纯单 session 压缩更利于保留 lineage 与跨 session 检索脉络
 - 保持了 `session` 作为聊天数据骨架 owner 的边界清晰
 - 能直接支撑后续 `chat`、`agent`、`tools`、`recall`、`compression` 模块落地
