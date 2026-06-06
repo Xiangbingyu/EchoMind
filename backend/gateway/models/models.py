@@ -68,3 +68,13 @@ class Agent(Base):
     tools_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     plugins_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class Proposal(Base):
+    __tablename__ = "proposal"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    project_workspace_id: Mapped[str] = mapped_column(ForeignKey("project_workspace.id"), nullable=False)
+    branch_name: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, default="open")  # open / confirmed / pushed
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

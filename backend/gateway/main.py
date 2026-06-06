@@ -6,6 +6,7 @@ from gateway.api.sessions import router as sessions_router
 from gateway.api.agents import router as agents_router
 from gateway.api.callback import router as callback_router
 from gateway.ws.routes import router as ws_router
+from gateway.git.api import router as git_router
 
 
 @asynccontextmanager
@@ -20,6 +21,7 @@ app.include_router(sessions_router)
 app.include_router(agents_router)
 app.include_router(callback_router)
 app.include_router(ws_router)
+app.include_router(git_router)
 
 
 @app.get("/health")

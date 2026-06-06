@@ -64,3 +64,22 @@ class AgentOut(AgentCreate):
     id: str
     created_at: datetime
     model_config = {"from_attributes": True}
+
+
+class ProposalCreate(BaseModel):
+    project_workspace_id: str
+
+
+class ProposalOut(BaseModel):
+    id: str
+    project_workspace_id: str
+    branch_name: str
+    status: str
+    created_at: datetime
+    model_config = {"from_attributes": True}
+
+
+class ProposalDiffOut(BaseModel):
+    proposal_id: str
+    changed_files: list[str]
+    patch: str
