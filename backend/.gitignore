@@ -1,5 +1,16 @@
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
 *.db
 .env
 .venv/
+**/.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.idea/
+.vscode/
