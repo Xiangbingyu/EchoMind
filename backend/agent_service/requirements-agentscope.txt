@@ -1,4 +1,0 @@
-# Optional AgentScope dependencies.
-# Install this file in a dedicated virtual environment to avoid overriding
-# FastAPI runtime dependencies used by gateway and agent_service.
-agentscope==2.0.1

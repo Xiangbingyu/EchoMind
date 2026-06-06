@@ -1,8 +1,8 @@
 # Backend Environment Setup
 
 This backend contains multiple Python services with different dependency
-requirements. To avoid package conflicts, create an independent virtual
-environment for each service.
+requirements. Create an independent virtual environment for each service and do
+not rely on the old system Python.
 
 ## Recommended Python Version
 
@@ -16,24 +16,21 @@ environment for each service.
   - Used only for the gateway service
   - Installs `backend/gateway/requirements.txt`
 - `backend/agent_service/.venv`
-  - Used only for the FastAPI agent service
+  - Used only for the FastAPI + AgentScope agent service
   - Installs `backend/agent_service/requirements.txt`
-- `backend/agent_service/.venv-agentscope`
-  - Optional
-  - Used only for AgentScope experiments or a future standalone agent process
-  - Installs `backend/agent_service/requirements-agentscope.txt`
 
 ## Why Separate Environments
 
-`gateway` and `agent_service` use FastAPI with pinned versions such as:
+`gateway` and `agent_service` must stay in separate virtual environments.
 
-- `fastapi==0.115.0`
-- `starlette==0.38.6`
-- `uvicorn==0.30.6`
+- `gateway` keeps its own pinned FastAPI stack.
+- `agent_service` is now AgentScope-first and lets pip resolve compatible
+  FastAPI, Starlette, Uvicorn, and model SDK versions.
 
 `agentscope` pulls in newer transitive dependencies like `mcp`,
-`sse-starlette`, newer `starlette`, and newer `uvicorn`, which can break the
-FastAPI services if they share the same virtual environment.
+`sse-starlette`, newer `starlette`, newer `uvicorn`, and newer model SDKs.
+Because of that, `agent_service` should not keep a second optional AgentScope
+environment or pin legacy runtime versions in parallel.
 
 ## Create Environments
 
@@ -42,7 +39,6 @@ If `py -3.12` is available:
 ```powershell
 py -3.12 -m venv E:\Github\EchoMind\backend\gateway\.venv
 py -3.12 -m venv E:\Github\EchoMind\backend\agent_service\.venv
-py -3.12 -m venv E:\Github\EchoMind\backend\agent_service\.venv-agentscope
 ```
 
 If the Python launcher cannot find 3.12, replace `py -3.12` with the absolute
@@ -68,12 +64,6 @@ E:\Github\EchoMind\backend\gateway\.venv\Scripts\python.exe -m pip install -r E:
 E:\Github\EchoMind\backend\agent_service\.venv\Scripts\python.exe -m pip install -r E:\Github\EchoMind\backend\agent_service\requirements.txt
 ```
 
-### Optional AgentScope Environment
-
-```powershell
-E:\Github\EchoMind\backend\agent_service\.venv-agentscope\Scripts\python.exe -m pip install -r E:\Github\EchoMind\backend\agent_service\requirements-agentscope.txt
-```
-
 If the network is slow, use a mirror:
 
 ```powershell
@@ -94,7 +84,6 @@ Check dependency consistency:
 ```powershell
 E:\Github\EchoMind\backend\gateway\.venv\Scripts\python.exe -m pip check
 E:\Github\EchoMind\backend\agent_service\.venv\Scripts\python.exe -m pip check
-E:\Github\EchoMind\backend\agent_service\.venv-agentscope\Scripts\python.exe -m pip check
 ```
 
 ## Start Services
@@ -116,7 +105,7 @@ E:\Github\EchoMind\backend\agent_service\.venv\Scripts\python.exe -m uvicorn age
 ## Notes
 
 - Do not install `agentscope` into `backend/gateway/.venv`
-- Do not install `agentscope` into `backend/agent_service/.venv` unless you are
-  ready to resolve version conflicts yourself
-- If `agent_service` later needs real AgentScope integration, prefer running it
-  in a separate process with `.venv-agentscope`
+- `backend/agent_service/.venv` is the only supported runtime environment for
+  the agent service
+- If dependency resolution changes in future AgentScope releases, update
+  `backend/agent_service/requirements.txt` rather than creating a second venv
