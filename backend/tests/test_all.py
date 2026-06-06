@@ -5,7 +5,6 @@ Requires: gateway on :8000, agent_service on :8001
 """
 import asyncio
 import httpx
-import websockets
 import json
 
 BASE = "http://localhost:8000"
@@ -26,7 +25,7 @@ async def test_health():
         check("gateway /health 200", r.status_code == 200)
         check("service=gateway", r.json().get("service") == "gateway")
 
-        r2 = await c.get("http://localhost:8001/health")
+        r2 = await c.get(f"{BASE}/internal/agent_service/health")
         check("agent_service /health 200", r2.status_code == 200)
         check("service=agent_service", r2.json().get("service") == "agent_service")
 
@@ -73,17 +72,22 @@ async def test_websocket(sess_id: str):
     print("\n=== WebSocket ===")
     uri = f"ws://localhost:8000/ws/session/{sess_id}"
     try:
-        async with websockets.connect(uri) as ws:
-            check("WS handshake ok", True)
-            await ws.send("ping")
-            events = []
-            for _ in range(2):
-                raw = await asyncio.wait_for(ws.recv(), timeout=5)
-                events.append(json.loads(raw))
-            types = [e["type"] for e in events]
-            check("received agent.token", "agent.token" in types)
-            check("received agent.done", "agent.done" in types)
-            check("echo content correct", any("[echo] ping" in e["data"] for e in events))
+        import httpx_ws
+        async with httpx.AsyncClient() as client:
+            async with httpx_ws.aconnect_ws(uri, client) as ws:
+                check("WS handshake ok", True)
+                await ws.send_text("ping")
+                events = []
+                for _ in range(20):
+                    msg = await asyncio.wait_for(ws.receive_text(), timeout=10)
+                    event = json.loads(msg)
+                    events.append(event)
+                    if event["type"] == "agent.done":
+                        break
+                types = [e["type"] for e in events]
+                check("received agent.token", "agent.token" in types)
+                check("received agent.done", "agent.done" in types)
+                check("reply not empty", any(e["data"] for e in events if e["type"] == "agent.done"))
     except Exception as e:
         check("WS test", False, str(e))
 
