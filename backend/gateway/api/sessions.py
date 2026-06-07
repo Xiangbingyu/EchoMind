@@ -23,6 +23,8 @@ async def create_session(body: SessionCreate, db: AsyncSession = Depends(get_db)
     project = await db.get(ProjectWorkspace, body.project_workspace_id)
     if not project:
         raise HTTPException(404, "ProjectWorkspace not found")
+    if project.workspace_id != body.workspace_id:
+        raise HTTPException(400, "workspace_id does not match project workspace")
     session = Session(**body.model_dump())
     db.add(session)
     await db.commit()

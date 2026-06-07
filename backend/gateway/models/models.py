@@ -39,6 +39,7 @@ class Session(Base):
     __tablename__ = "session"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id"), nullable=False)
     project_workspace_id: Mapped[str] = mapped_column(ForeignKey("project_workspace.id"), nullable=False)
     type: Mapped[str] = mapped_column(String, nullable=False)  # group / single / group_dm
     title: Mapped[str | None] = mapped_column(String, nullable=True)

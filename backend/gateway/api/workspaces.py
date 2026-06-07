@@ -41,3 +41,11 @@ async def list_projects(workspace_id: str, db: AsyncSession = Depends(get_db)):
         select(ProjectWorkspace).where(ProjectWorkspace.workspace_id == workspace_id)
     )
     return result.scalars().all()
+
+
+@router.get("/projects/{project_id}", response_model=ProjectOut)
+async def get_project(project_id: str, db: AsyncSession = Depends(get_db)):
+    project = await db.get(ProjectWorkspace, project_id)
+    if not project:
+        raise HTTPException(404, "ProjectWorkspace not found")
+    return project

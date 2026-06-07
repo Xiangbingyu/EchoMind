@@ -6,174 +6,22 @@ function getSessionTitle(session) {
   return session.title || `会话 ${session.id.slice(0, 8)}`;
 }
 
-function toDisplayMessages(items) {
-  return items
-    .filter((item) => item.role === 'user' || item.role === 'agent')
-    .map((item) => ({
-      id: item.id,
-      role: item.role,
-      content: item.content,
-      pending: false,
-    }));
-}
-
-export default function ChatPanel({ activeChat, apiBaseUrl }) {
-  const [inputValue, setInputValue] = useState('');
-  const [messages, setMessages] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [statusText, setStatusText] = useState('');
-  const [sending, setSending] = useState(false);
-  const wsRef = useRef(null);
-  const streamMessageIdRef = useRef(null);
+export default function ChatPanel({
+  activeChat,
+  inputValue,
+  messages,
+  loading,
+  error,
+  statusText,
+  sending,
+  onInputChange,
+  onSend,
+}) {
   const messageEndRef = useRef(null);
 
   useEffect(() => {
     messageEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, statusText]);
-
-  useEffect(() => {
-    if (!activeChat) {
-      setMessages([]);
-      setError('');
-      setStatusText('');
-      return undefined;
-    }
-
-    let cancelled = false;
-    const wsUrl = `${apiBaseUrl.replace('http', 'ws')}/ws/session/${activeChat.id}`;
-
-    async function loadMessages() {
-      setLoading(true);
-      setError('');
-      setStatusText('');
-      streamMessageIdRef.current = null;
-
-      try {
-        const response = await fetch(`${apiBaseUrl}/api/sessions/${activeChat.id}/messages`);
-        if (!response.ok) {
-          throw new Error(`Failed to load messages: ${response.status}`);
-        }
-        const data = await response.json();
-        if (!cancelled) {
-          setMessages(toDisplayMessages(data));
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load messages');
-          setMessages([]);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-
-    loadMessages();
-
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onmessage = (event) => {
-      const payload = JSON.parse(event.data);
-
-      if (payload.type === 'task.status') {
-        if (!cancelled) {
-          setStatusText(payload.data || '');
-          if (String(payload.data || '').startsWith('failed')) {
-            setSending(false);
-          }
-        }
-        return;
-      }
-
-      if (payload.type === 'agent.token') {
-        if (cancelled) {
-          return;
-        }
-
-        setMessages((current) => {
-          const streamId = streamMessageIdRef.current;
-          if (!streamId) {
-            const newId = `stream-${Date.now()}`;
-            streamMessageIdRef.current = newId;
-            return [...current, { id: newId, role: 'agent', content: payload.data || '', pending: true }];
-          }
-
-          return current.map((item) =>
-            item.id === streamId ? { ...item, content: `${item.content}${payload.data || ''}` } : item,
-          );
-        });
-        return;
-      }
-
-      if (payload.type === 'agent.done') {
-        if (cancelled) {
-          return;
-        }
-
-        setSending(false);
-        setMessages((current) => {
-          const streamId = streamMessageIdRef.current;
-          streamMessageIdRef.current = null;
-          if (!streamId) {
-            return [...current, { id: `done-${Date.now()}`, role: 'agent', content: payload.data || '', pending: false }];
-          }
-
-          return current.map((item) =>
-            item.id === streamId ? { ...item, content: payload.data || item.content, pending: false } : item,
-          );
-        });
-        return;
-      }
-
-      if (payload.type === 'error' && !cancelled) {
-        setError(payload.data || '消息发送失败');
-        setSending(false);
-      }
-    };
-
-    ws.onerror = () => {
-      if (!cancelled) {
-        setError('WebSocket 连接失败');
-        setSending(false);
-      }
-    };
-
-    ws.onclose = () => {
-      if (!cancelled) {
-        setSending(false);
-      }
-    };
-
-    return () => {
-      cancelled = true;
-      streamMessageIdRef.current = null;
-      ws.close();
-      if (wsRef.current === ws) {
-        wsRef.current = null;
-      }
-    };
-  }, [activeChat, apiBaseUrl]);
-
-  function handleSend() {
-    const text = inputValue.trim();
-    const ws = wsRef.current;
-    if (!text || !ws || ws.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    setError('');
-    setStatusText('');
-    setSending(true);
-    setMessages((current) => [
-      ...current,
-      { id: `user-${Date.now()}`, role: 'user', content: text, pending: false },
-    ]);
-    ws.send(text);
-    setInputValue('');
-  }
 
   if (!activeChat) {
     return (
@@ -231,10 +79,10 @@ export default function ChatPanel({ activeChat, apiBaseUrl }) {
           className="chat-textarea"
           placeholder="发送消息..."
           value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
+          onChange={(e) => onInputChange(e.target.value)}
         />
         <div className="chat-input-actions">
-          <button className="send-btn" disabled={!inputValue.trim() || sending} onClick={handleSend}>
+          <button className="send-btn" disabled={!inputValue.trim() || sending} onClick={onSend}>
             <Send size={16} />
             {sending ? '发送中' : '发送'}
           </button>

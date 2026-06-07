@@ -58,7 +58,9 @@
   padding: 24px;
   display: flex;
   flex-direction: column;
+  gap: 16px;
   background: #fff;
+  overflow-y: auto;
 }
 
 .workspace-placeholder {
@@ -79,4 +81,38 @@
   margin-bottom: 16px;
   color: var(--fs-primary);
   opacity: 0.5;
+}
+
+.workspace-section {
+  border: 1px solid var(--fs-border);
+  border-radius: 10px;
+  padding: 16px;
+  background: var(--fs-bg-chat);
+}
+
+.workspace-section h4 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fs-text-main);
+}
+
+.workspace-section p {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--fs-text-secondary);
+  line-height: 1.5;
+}
+
+.workspace-section p:last-child {
+  margin-bottom: 0;
+}
+
+.workspace-alert {
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #fff2f2;
+  color: #b42318;
+  border: 1px solid #f2b8b5;
+  font-size: 13px;
 }

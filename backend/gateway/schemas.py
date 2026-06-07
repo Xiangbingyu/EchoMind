@@ -29,6 +29,7 @@ class ProjectOut(ProjectCreate):
 
 
 class SessionCreate(BaseModel):
+    workspace_id: str
     project_workspace_id: str
     type: str  # group / single / group_dm
     title: str | None = None

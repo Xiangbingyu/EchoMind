@@ -13,15 +13,42 @@ const RIGHT_PANEL_MIN_WIDTH = RIGHT_PANEL_INITIAL_WIDTH;
 const CENTER_PANEL_MIN_WIDTH = 720;
 const WORKSPACE_COLLAPSED_WIDTH = 44;
 
+function toDisplayMessages(items) {
+  return items
+    .filter((item) => item.role === 'user' || item.role === 'agent')
+    .map((item, index) => ({
+      id: item.id || `msg-${index}`,
+      role: item.role,
+      content: item.content,
+      pending: false,
+    }));
+}
+
 export default function Messages() {
   const [activeChat, setActiveChat] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState('');
+  const [chatStatus, setChatStatus] = useState('');
+  const [taskState, setTaskState] = useState('');
+  const [sending, setSending] = useState(false);
+  const [inputValue, setInputValue] = useState('');
+  const [workspaceSnapshot, setWorkspaceSnapshot] = useState(null);
+  const [workspaceTree, setWorkspaceTree] = useState([]);
+  const [planState, setPlanState] = useState([]);
+  const [sandboxState, setSandboxState] = useState({ status: 'idle' });
+  const [agentState, setAgentState] = useState({ status: 'idle', last_error: '' });
+  const [workspaceError, setWorkspaceError] = useState('');
   const [leftPanelWidth, setLeftPanelWidth] = useState(LEFT_PANEL_INITIAL_WIDTH);
   const [rightPanelWidth, setRightPanelWidth] = useState(RIGHT_PANEL_INITIAL_WIDTH);
   const [workspaceCollapsed, setWorkspaceCollapsed] = useState(false);
   const containerRef = useRef(null);
+  const chatSocketRef = useRef(null);
+  const workspaceSocketRef = useRef(null);
+  const streamMessageIdRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +94,194 @@ export default function Messages() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!activeChat) {
+      setChatMessages([]);
+      setChatStatus('');
+      setTaskState('');
+      setChatError('');
+      setSending(false);
+      streamMessageIdRef.current = null;
+      return undefined;
+    }
+
+    setChatLoading(true);
+    setChatError('');
+    setChatStatus('');
+    setTaskState('');
+    streamMessageIdRef.current = null;
+
+    const wsUrl = `${API_BASE_URL.replace('http', 'ws')}/ws/session/${activeChat.id}/chat`;
+    const ws = new WebSocket(wsUrl);
+    chatSocketRef.current = ws;
+
+    ws.onmessage = (event) => {
+      const payload = JSON.parse(event.data);
+
+      if (payload.type === 'message.history.sync') {
+        setChatMessages(toDisplayMessages(payload.data || []));
+        setChatLoading(false);
+        return;
+      }
+
+      if (payload.type === 'chat.status') {
+        setChatStatus(payload.data || '');
+        return;
+      }
+
+      if (payload.type === 'task.status') {
+        setTaskState(payload.data || '');
+        if (String(payload.data || '').startsWith('failed')) {
+          setSending(false);
+        }
+        return;
+      }
+
+      if (payload.type === 'agent.token') {
+        setChatMessages((current) => {
+          const streamId = streamMessageIdRef.current;
+          if (!streamId) {
+            const newId = `stream-${Date.now()}`;
+            streamMessageIdRef.current = newId;
+            return [...current, { id: newId, role: 'agent', content: payload.data || '', pending: true }];
+          }
+
+          return current.map((item) =>
+            item.id === streamId ? { ...item, content: `${item.content}${payload.data || ''}` } : item,
+          );
+        });
+        return;
+      }
+
+      if (payload.type === 'agent.done') {
+        setSending(false);
+        setChatMessages((current) => {
+          const streamId = streamMessageIdRef.current;
+          streamMessageIdRef.current = null;
+
+          if (!streamId) {
+            return [...current, { id: `done-${Date.now()}`, role: 'agent', content: payload.data || '', pending: false }];
+          }
+
+          return current.map((item) =>
+            item.id === streamId ? { ...item, content: payload.data || item.content, pending: false } : item,
+          );
+        });
+        return;
+      }
+
+      if (payload.type === 'error') {
+        setChatError(payload.data || '消息发送失败');
+        setSending(false);
+      }
+    };
+
+    ws.onerror = () => {
+      setChatError('Chat WebSocket 连接失败');
+      setChatLoading(false);
+      setSending(false);
+    };
+
+    ws.onclose = () => {
+      setSending(false);
+      setChatLoading(false);
+    };
+
+    return () => {
+      streamMessageIdRef.current = null;
+      ws.close();
+      if (chatSocketRef.current === ws) {
+        chatSocketRef.current = null;
+      }
+    };
+  }, [activeChat]);
+
+  useEffect(() => {
+    if (!activeChat) {
+      setWorkspaceSnapshot(null);
+      setWorkspaceTree([]);
+      setPlanState([]);
+      setSandboxState({ status: 'idle' });
+      setAgentState({ status: 'idle', last_error: '' });
+      setWorkspaceError('');
+      return undefined;
+    }
+
+    setWorkspaceError('');
+
+    const wsUrl = `${API_BASE_URL.replace('http', 'ws')}/ws/session/${activeChat.id}/workspace`;
+    const ws = new WebSocket(wsUrl);
+    workspaceSocketRef.current = ws;
+
+    ws.onmessage = (event) => {
+      const payload = JSON.parse(event.data);
+
+      if (payload.type === 'workspace.snapshot') {
+        setWorkspaceSnapshot(payload.data || null);
+        return;
+      }
+
+      if (payload.type === 'workspace.tree.snapshot' || payload.type === 'workspace.tree.updated') {
+        setWorkspaceTree(payload.data || []);
+        return;
+      }
+
+      if (payload.type === 'plan.snapshot' || payload.type === 'plan.updated') {
+        setPlanState(payload.data || []);
+        return;
+      }
+
+      if (payload.type === 'sandbox.snapshot' || payload.type === 'sandbox.status') {
+        setSandboxState(payload.data || { status: 'idle' });
+        return;
+      }
+
+      if (payload.type === 'agent.snapshot' || payload.type === 'agent.status') {
+        setAgentState(payload.data || { status: 'idle', last_error: '' });
+        return;
+      }
+
+      if (payload.type === 'task.status') {
+        setTaskState(payload.data || '');
+        return;
+      }
+
+      if (payload.type === 'error') {
+        setWorkspaceError(payload.data || 'Workspace WebSocket 连接失败');
+      }
+    };
+
+    ws.onerror = () => {
+      setWorkspaceError('Workspace WebSocket 连接失败');
+    };
+
+    return () => {
+      ws.close();
+      if (workspaceSocketRef.current === ws) {
+        workspaceSocketRef.current = null;
+      }
+    };
+  }, [activeChat]);
+
+  function handleSend() {
+    const text = inputValue.trim();
+    const ws = chatSocketRef.current;
+    if (!text || !ws || ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    setChatError('');
+    setChatStatus('');
+    setTaskState('');
+    setSending(true);
+    setChatMessages((current) => [
+      ...current,
+      { id: `user-${Date.now()}`, role: 'user', content: text, pending: false },
+    ]);
+    ws.send(text);
+    setInputValue('');
+  }
 
   function clampWidth(value, min, max) {
     const safeMax = Math.max(min, max);
@@ -143,7 +358,17 @@ export default function Messages() {
       </div>
 
       <div className="messages-pane-center">
-        <ChatPanel activeChat={activeChat} apiBaseUrl={API_BASE_URL} />
+        <ChatPanel
+          activeChat={activeChat}
+          inputValue={inputValue}
+          messages={chatMessages}
+          loading={chatLoading}
+          error={chatError}
+          statusText={taskState || chatStatus}
+          sending={sending}
+          onInputChange={setInputValue}
+          onSend={handleSend}
+        />
       </div>
 
       <div
@@ -153,6 +378,14 @@ export default function Messages() {
         <WorkspacePanel
           collapsed={workspaceCollapsed}
           onToggleCollapse={() => setWorkspaceCollapsed((current) => !current)}
+          activeChat={activeChat}
+          workspaceSnapshot={workspaceSnapshot}
+          workspaceTree={workspaceTree}
+          planState={planState}
+          sandboxState={sandboxState}
+          agentState={agentState}
+          taskState={taskState}
+          error={workspaceError}
         />
         {!workspaceCollapsed ? (
           <button

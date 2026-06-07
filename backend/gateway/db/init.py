@@ -14,7 +14,18 @@ async def _ensure_proposal_base_branch_column() -> None:
             )
 
 
+async def _ensure_session_workspace_id_column() -> None:
+    async with engine.begin() as conn:
+        result = await conn.execute(text("PRAGMA table_info(session)"))
+        columns = {row[1] for row in result.fetchall()}
+        if "workspace_id" not in columns:
+            await conn.execute(
+                text("ALTER TABLE session ADD COLUMN workspace_id VARCHAR")
+            )
+
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await _ensure_proposal_base_branch_column()
+    await _ensure_session_workspace_id_column()

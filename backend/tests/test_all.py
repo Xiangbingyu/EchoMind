@@ -60,6 +60,7 @@ async def test_rest() -> tuple[str, str, str]:
         check("GET /api/workspaces/{id}/projects returns list", isinstance(r.json(), list))
 
         r = await c.post(f"{BASE}/api/sessions", json={
+            "workspace_id": ws_id,
             "project_workspace_id": proj_id,
             "type": "single",
             "title": "测试会话",
@@ -87,7 +88,10 @@ async def test_rest() -> tuple[str, str, str]:
 
 async def create_session(project_id: str, title: str) -> str:
     async with httpx.AsyncClient() as c:
+        session_lookup = await c.get(f"{BASE}/api/projects/{project_id}")
+        workspace_id = session_lookup.json()["workspace_id"]
         r = await c.post(f"{BASE}/api/sessions", json={
+            "workspace_id": workspace_id,
             "project_workspace_id": project_id,
             "type": "group",
             "title": title,
@@ -98,25 +102,49 @@ async def create_session(project_id: str, title: str) -> str:
 
 async def test_websocket(sess_id: str):
     print("\n=== WebSocket ===")
-    uri = f"ws://localhost:8000/ws/session/{sess_id}"
+    chat_uri = f"ws://localhost:8000/ws/session/{sess_id}/chat"
+    workspace_uri = f"ws://localhost:8000/ws/session/{sess_id}/workspace"
     try:
         import httpx_ws
         async with httpx.AsyncClient() as client:
-            async with httpx_ws.aconnect_ws(uri, client) as ws:
-                check("WS handshake ok", True)
-                await ws.send_text("ping")
-                events = []
-                for _ in range(40):
-                    msg = await asyncio.wait_for(ws.receive_text(), timeout=10)
-                    event = json.loads(msg)
-                    events.append(event)
-                    if event["type"] == "agent.done":
-                        break
-                types = [e["type"] for e in events]
-                check("received task.status", "task.status" in types)
-                check("received agent.token", "agent.token" in types)
-                check("received agent.done", "agent.done" in types)
-                check("reply not empty", any(e["data"] for e in events if e["type"] == "agent.done"))
+            async with httpx_ws.aconnect_ws(chat_uri, client) as chat_ws:
+                async with httpx_ws.aconnect_ws(workspace_uri, client) as workspace_ws:
+                    check("chat WS handshake ok", True)
+                    check("workspace WS handshake ok", True)
+
+                    chat_snapshot = json.loads(await asyncio.wait_for(chat_ws.receive_text(), timeout=10))
+                    workspace_snapshot = json.loads(await asyncio.wait_for(workspace_ws.receive_text(), timeout=10))
+
+                    check("chat snapshot received", chat_snapshot["type"] == "message.history.sync", str(chat_snapshot))
+                    check("workspace snapshot received", workspace_snapshot["type"] == "workspace.snapshot", str(workspace_snapshot))
+
+                    await chat_ws.send_text("ping")
+                    chat_events = []
+                    workspace_events = [workspace_snapshot]
+
+                    for _ in range(120):
+                        msg = await asyncio.wait_for(chat_ws.receive_text(), timeout=10)
+                        event = json.loads(msg)
+                        chat_events.append(event)
+                        if event["type"] == "agent.done":
+                            break
+
+                    for _ in range(10):
+                        msg = await asyncio.wait_for(workspace_ws.receive_text(), timeout=10)
+                        event = json.loads(msg)
+                        workspace_events.append(event)
+                        if event["type"] == "task.status" and event["data"] == "completed":
+                            break
+
+                    chat_types = [e["type"] for e in chat_events]
+                    workspace_types = [e["type"] for e in workspace_events]
+                    check("chat received task.status", "task.status" in chat_types)
+                    check("chat received agent.token", "agent.token" in chat_types)
+                    check("chat received agent.done", "agent.done" in chat_types)
+                    check("workspace received agent.status", "agent.status" in workspace_types)
+                    check("workspace received sandbox.status", "sandbox.status" in workspace_types)
+                    check("workspace received workspace.tree.updated", "workspace.tree.updated" in workspace_types)
+                    check("reply not empty", any(e["data"] for e in chat_events if e["type"] == "agent.done"))
     except Exception as e:
         check("WS test", False, str(e))
 
@@ -135,7 +163,7 @@ async def test_messages(sess_id: str):
 async def test_history_context(project_id: str):
     print("\n=== History Context ===")
     sess_id = await create_session(project_id, "历史上下文验证")
-    uri = f"ws://localhost:8000/ws/session/{sess_id}"
+    uri = f"ws://localhost:8000/ws/session/{sess_id}/chat"
     try:
         import httpx_ws
 
