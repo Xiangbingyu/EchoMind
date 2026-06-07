@@ -1,6 +1,7 @@
 import unittest
 from datetime import UTC, datetime
 from unittest.mock import patch
+import asyncio
 
 from fastapi.testclient import TestClient
 
@@ -108,39 +109,35 @@ class DualChannelWebsocketTests(unittest.TestCase):
         app.dependency_overrides.clear()
 
     def test_chat_callback_broadcasts_only_to_chat_channel(self):
-        with self.client.websocket_connect('/ws/session/session-1/chat') as chat_ws:
-            with self.client.websocket_connect('/ws/session/session-1/workspace') as workspace_ws:
-                response = self.client.post(
-                    '/internal/callback',
-                    json={
-                        'session_id': 'session-1',
-                        'type': 'agent.token',
-                        'data': 'hello',
-                    },
-                )
+        with self.client.websocket_connect('/ws/session/session-1') as ws:
+            response = self.client.post(
+                '/internal/callback',
+                json={
+                    'session_id': 'session-1',
+                    'type': 'agent.token',
+                    'data': 'hello',
+                },
+            )
 
-                self.assertEqual(response.status_code, 200)
-                self.assertEqual(chat_ws.receive_json()['type'], 'agent.token')
-                workspace_ws.send_text('noop')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(ws.receive_json()['type'], 'agent.token')
 
     def test_workspace_callback_broadcasts_only_to_workspace_channel(self):
-        with self.client.websocket_connect('/ws/session/session-1/chat') as chat_ws:
-            with self.client.websocket_connect('/ws/session/session-1/workspace') as workspace_ws:
-                response = self.client.post(
-                    '/internal/callback',
-                    json={
-                        'session_id': 'session-1',
-                        'type': 'workspace.snapshot',
-                        'data': {'workspace_id': 'workspace-1'},
-                    },
-                )
+        with self.client.websocket_connect('/ws/session/session-1') as ws:
+            response = self.client.post(
+                '/internal/callback',
+                json={
+                    'session_id': 'session-1',
+                    'type': 'workspace.snapshot',
+                    'data': {'workspace_id': 'workspace-1'},
+                },
+            )
 
-                self.assertEqual(response.status_code, 200)
-                self.assertEqual(workspace_ws.receive_json()['type'], 'workspace.snapshot')
-                chat_ws.send_text('noop')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(ws.receive_json()['type'], 'workspace.snapshot')
 
     def test_workspace_callback_accepts_list_payloads(self):
-        with self.client.websocket_connect('/ws/session/session-1/workspace') as workspace_ws:
+        with self.client.websocket_connect('/ws/session/session-1') as ws:
             response = self.client.post(
                 '/internal/callback',
                 json={
@@ -151,7 +148,7 @@ class DualChannelWebsocketTests(unittest.TestCase):
             )
 
             self.assertEqual(response.status_code, 200)
-            event = workspace_ws.receive_json()
+            event = ws.receive_json()
             self.assertEqual(event['type'], 'workspace.tree.updated')
             self.assertEqual(event['data'][0]['path'], '.')
 
@@ -177,20 +174,10 @@ class DualChannelWebsocketTests(unittest.TestCase):
                 return FakeResponse({'type': 'message.history.sync', 'data': []})
 
         with patch('gateway.ws.routes.httpx.AsyncClient', return_value=FakeClient()):
-            with self.client.websocket_connect('/ws/session/session-1/chat') as chat_ws:
-                self.assertEqual(chat_ws.receive_json()['type'], 'message.history.sync')
+            with self.client.websocket_connect('/ws/session/session-1') as ws:
+                self.assertEqual(ws.receive_json()['type'], 'message.history.sync')
 
     def test_workspace_websocket_sends_snapshot_on_connect(self):
-        class FakeResponse:
-            def __init__(self, payload):
-                self._payload = payload
-
-            def raise_for_status(self):
-                return None
-
-            def json(self):
-                return self._payload
-
         class FakeClient:
             async def __aenter__(self):
                 return self
@@ -199,14 +186,32 @@ class DualChannelWebsocketTests(unittest.TestCase):
                 return False
 
             async def get(self, url, timeout=5):
+                class FakeResponse:
+                    def __init__(self, payload):
+                        self._payload = payload
+
+                    def raise_for_status(self):
+                        return None
+
+                    def json(self):
+                        return self._payload
+
+                if url.endswith('/chat-snapshot'):
+                    return FakeResponse({'type': 'message.history.sync', 'data': []})
+
                 return FakeResponse([
                     {'type': 'workspace.snapshot', 'data': {'workspace_id': 'workspace-1'}},
                     {'type': 'workspace.tree.snapshot', 'data': []},
                 ])
 
         with patch('gateway.ws.routes.httpx.AsyncClient', return_value=FakeClient()):
-            with self.client.websocket_connect('/ws/session/session-1/workspace') as workspace_ws:
-                self.assertEqual(workspace_ws.receive_json()['type'], 'workspace.snapshot')
+            with self.client.websocket_connect('/ws/session/session-1') as ws:
+                first_event = ws.receive_json()
+                second_event = ws.receive_json()
+                third_event = ws.receive_json()
+                self.assertEqual(first_event['type'], 'message.history.sync')
+                self.assertEqual(second_event['type'], 'workspace.snapshot')
+                self.assertEqual(third_event['type'], 'workspace.tree.snapshot')
 
 
 class ProjectLookupTests(unittest.TestCase):
@@ -243,6 +248,79 @@ class ProjectLookupTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()['id'], 'project-1')
+
+
+class SessionWorkspaceBackfillTests(unittest.TestCase):
+    def test_backfill_updates_legacy_sessions_from_project_workspace(self):
+        from gateway.db import init as init_module
+
+        statements = []
+
+        class FakeResult:
+            def fetchall(self):
+                return [(0, 'id'), (1, 'project_workspace_id'), (2, 'workspace_id')]
+
+        class FakeConn:
+            async def execute(self, stmt):
+                statements.append(str(stmt))
+                return FakeResult()
+
+        class FakeBegin:
+            async def __aenter__(self):
+                return FakeConn()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class FakeEngine:
+            def begin(self):
+                return FakeBegin()
+
+        with patch.object(init_module, 'engine', FakeEngine()):
+            asyncio.run(init_module._backfill_session_workspace_ids())
+
+        self.assertTrue(any('UPDATE session' in stmt for stmt in statements), statements)
+
+
+class WebsocketDisconnectTests(unittest.TestCase):
+    def test_session_ws_ignores_disconnect_during_snapshot(self):
+        from gateway.ws import routes as routes_module
+
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {'type': 'message.history.sync', 'data': []}
+
+        class FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def get(self, url, timeout=5):
+                return FakeResponse()
+
+        class ClosedWs:
+            async def send_json(self, payload):
+                raise RuntimeError('connection already closed')
+
+        async def fake_connect(session_id, ws):
+            return None
+
+        with patch.object(routes_module, 'manager') as manager_mock, patch.object(
+            routes_module.httpx, 'AsyncClient', return_value=FakeClient()
+        ), patch.object(
+            routes_module, '_send_workspace_snapshot', side_effect=RuntimeError('connection already closed')
+        ):
+            manager_mock.connect.side_effect = fake_connect
+
+            # The coroutine should surface the disconnect as a normal exception path,
+            # not as an unhandled ASGI crash.
+            with self.assertRaises(RuntimeError):
+                asyncio.run(routes_module.session_ws('session-1', ClosedWs()))
 
 
 if __name__ == '__main__':

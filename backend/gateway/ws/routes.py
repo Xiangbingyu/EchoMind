@@ -22,8 +22,7 @@ async def _dispatch_agent_run(*, session_id: str, text: str):
                 timeout=5,
             )
         except httpx.RequestError:
-            await manager.broadcast(session_id, "chat", {"type": "error", "data": "agent_service unavailable"})
-            await manager.broadcast(session_id, "workspace", {"type": "error", "data": "agent_service unavailable"})
+            await manager.broadcast(session_id, {"type": "error", "data": "agent_service unavailable"})
 
 
 async def _send_chat_snapshot(*, session_id: str, ws: WebSocket):
@@ -47,24 +46,14 @@ async def _send_workspace_snapshot(*, session_id: str, ws: WebSocket):
             await ws.send_json(event)
 
 
-@router.websocket("/ws/session/{session_id}/chat")
-async def session_chat_ws(session_id: str, ws: WebSocket):
-    await manager.connect(session_id, "chat", ws)
-    await _send_chat_snapshot(session_id=session_id, ws=ws)
+@router.websocket("/ws/session/{session_id}")
+async def session_ws(session_id: str, ws: WebSocket):
     try:
+        await manager.connect(session_id, ws)
+        await _send_chat_snapshot(session_id=session_id, ws=ws)
+        await _send_workspace_snapshot(session_id=session_id, ws=ws)
         while True:
             text = await ws.receive_text()
             await _dispatch_agent_run(session_id=session_id, text=text)
     except WebSocketDisconnect:
-        manager.disconnect(session_id, "chat", ws)
-
-
-@router.websocket("/ws/session/{session_id}/workspace")
-async def session_workspace_ws(session_id: str, ws: WebSocket):
-    await manager.connect(session_id, "workspace", ws)
-    await _send_workspace_snapshot(session_id=session_id, ws=ws)
-    try:
-        while True:
-            await ws.receive_text()
-    except WebSocketDisconnect:
-        manager.disconnect(session_id, "workspace", ws)
+        manager.disconnect(session_id, ws)

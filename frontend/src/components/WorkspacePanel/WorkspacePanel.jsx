@@ -6,6 +6,7 @@ export default function WorkspacePanel({
   onToggleCollapse,
   activeChat,
   workspaceSnapshot,
+  loading,
   workspaceTree,
   planState,
   sandboxState,
@@ -33,6 +34,11 @@ export default function WorkspacePanel({
             <div className="workspace-placeholder">
               <FolderGit2 size={48} className="placeholder-icon" />
               <p>选择一个会话后查看工作区运行态。</p>
+            </div>
+          ) : loading ? (
+            <div className="workspace-placeholder">
+              <FolderGit2 size={48} className="placeholder-icon" />
+              <p>正在加载工作区快照...</p>
             </div>
           ) : (
             <>

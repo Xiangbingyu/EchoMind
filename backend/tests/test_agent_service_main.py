@@ -24,11 +24,11 @@ class AgentServiceMainTests(unittest.TestCase):
 
         calls = []
 
-        async def fake_run_agent(*, session_id, content):
+        def fake_submit_run(*, session_id, content):
             calls.append({"session_id": session_id, "content": content})
-            return {"ok": True}
+            return None
 
-        with patch("agent_service.main.run_agent", side_effect=fake_run_agent):
+        with patch("agent_service.main.submit_run", side_effect=fake_submit_run) as submit_run_mock:
             
             response = client.post(
                 "/run",
@@ -36,12 +36,13 @@ class AgentServiceMainTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"ok": True})
+        self.assertEqual(response.json(), {"accepted": True})
+        submit_run_mock.assert_called_once()
         self.assertEqual(
             calls,
             [{"session_id": "session-1", "content": "hello"}],
         )
-
+ 
     def test_runner_streams_tokens_and_done_callback(self):
         callback_payloads = []
         history_calls = []

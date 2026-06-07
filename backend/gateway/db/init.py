@@ -24,8 +24,26 @@ async def _ensure_session_workspace_id_column() -> None:
             )
 
 
+async def _backfill_session_workspace_ids() -> None:
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                UPDATE session
+                SET workspace_id = (
+                    SELECT project_workspace.workspace_id
+                    FROM project_workspace
+                    WHERE project_workspace.id = session.project_workspace_id
+                )
+                WHERE workspace_id IS NULL
+                """
+            )
+        )
+
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await _ensure_proposal_base_branch_column()
     await _ensure_session_workspace_id_column()
+    await _backfill_session_workspace_ids()

@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import FastAPI
 from pydantic import BaseModel
 from agent_service.runtime.event_mapper import build_chat_snapshot, build_workspace_snapshot
@@ -11,6 +13,10 @@ class RunRequest(BaseModel):
     content: str
 
 
+def submit_run(*, session_id: str, content: str):
+    asyncio.create_task(run_agent(session_id=session_id, content=content))
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "agent_service"}
@@ -18,7 +24,8 @@ async def health():
 
 @app.post("/run")
 async def run(req: RunRequest):
-    return await run_agent(session_id=req.session_id, content=req.content)
+    submit_run(session_id=req.session_id, content=req.content)
+    return {"accepted": True}
 
 
 @app.get("/runtime/{session_id}/chat-snapshot")
