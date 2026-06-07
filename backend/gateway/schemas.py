@@ -67,16 +67,23 @@ class AgentOut(AgentCreate):
 
 
 class ProposalCreate(BaseModel):
-    project_workspace_id: str
+    base_branch: str | None = None
 
 
 class ProposalOut(BaseModel):
     id: str
     project_workspace_id: str
     branch_name: str
+    base_branch: str
     status: str
     created_at: datetime
     model_config = {"from_attributes": True}
+
+
+class WorkingCopyStatusOut(BaseModel):
+    is_dirty: bool
+    untracked: list[str]
+    modified: list[str]
 
 
 class ProposalDiffOut(BaseModel):

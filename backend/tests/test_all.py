@@ -61,7 +61,7 @@ async def test_rest() -> tuple[str, str, str]:
 
         r = await c.post(f"{BASE}/api/sessions", json={
             "project_workspace_id": proj_id,
-            "type": "group",
+            "type": "single",
             "title": "测试会话",
         })
         check("POST /api/sessions 200", r.status_code == 200)
@@ -69,6 +69,12 @@ async def test_rest() -> tuple[str, str, str]:
 
         r = await c.get(f"{BASE}/api/sessions/{sess_id}")
         check("GET /api/sessions/{id} 200", r.status_code == 200)
+
+        r = await c.get(f"{BASE}/api/sessions", params={"type": "single"})
+        check("GET /api/sessions?type=single 200", r.status_code == 200, r.text[:120])
+        sessions = r.json() if r.status_code == 200 else []
+        check("session list returns array", isinstance(sessions, list))
+        check("created single session listed", any(s["id"] == sess_id for s in sessions), str(sessions[:2]))
 
         r = await c.post(f"{BASE}/api/agents", json={"name": "CodeAgent", "type": "code"})
         check("POST /api/agents 200", r.status_code == 200)
@@ -100,13 +106,14 @@ async def test_websocket(sess_id: str):
                 check("WS handshake ok", True)
                 await ws.send_text("ping")
                 events = []
-                for _ in range(20):
+                for _ in range(40):
                     msg = await asyncio.wait_for(ws.receive_text(), timeout=10)
                     event = json.loads(msg)
                     events.append(event)
                     if event["type"] == "agent.done":
                         break
                 types = [e["type"] for e in events]
+                check("received task.status", "task.status" in types)
                 check("received agent.token", "agent.token" in types)
                 check("received agent.done", "agent.done" in types)
                 check("reply not empty", any(e["data"] for e in events if e["type"] == "agent.done"))

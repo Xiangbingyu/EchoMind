@@ -8,6 +8,16 @@ from gateway.schemas import SessionCreate, SessionOut, MessageOut
 router = APIRouter(prefix="/api")
 
 
+@router.get("/sessions", response_model=list[SessionOut])
+async def list_sessions(type: str | None = None, db: AsyncSession = Depends(get_db)):
+    stmt = select(Session)
+    if type:
+        stmt = stmt.where(Session.type == type)
+    stmt = stmt.order_by(Session.last_active_at.desc())
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
 @router.post("/sessions", response_model=SessionOut)
 async def create_session(body: SessionCreate, db: AsyncSession = Depends(get_db)):
     project = await db.get(ProjectWorkspace, body.project_workspace_id)

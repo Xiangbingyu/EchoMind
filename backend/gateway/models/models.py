@@ -76,5 +76,6 @@ class Proposal(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     project_workspace_id: Mapped[str] = mapped_column(ForeignKey("project_workspace.id"), nullable=False)
     branch_name: Mapped[str] = mapped_column(String, nullable=False)
-    status: Mapped[str] = mapped_column(String, default="open")  # open / confirmed / pushed
+    base_branch: Mapped[str] = mapped_column(String, default="master")
+    status: Mapped[str] = mapped_column(String, default="open")  # open / committed / confirmed / pushed
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

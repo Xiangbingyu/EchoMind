@@ -3,7 +3,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-GATEWAY_CALLBACK_URL = os.getenv("GATEWAY_CALLBACK_URL", "http://localhost:8000/internal/callback")
+GATEWAY_BASE_URL = os.getenv("GATEWAY_BASE_URL", "http://localhost:8000").rstrip("/")
+GATEWAY_CALLBACK_URL = f"{GATEWAY_BASE_URL}/internal/callback"
+GATEWAY_MESSAGES_URL_TEMPLATE = f"{GATEWAY_BASE_URL}/api/sessions/{{session_id}}/messages"
+SESSION_MAX_NON_SYSTEM_MESSAGES = int(os.getenv("SESSION_MAX_NON_SYSTEM_MESSAGES", "12"))
 
 MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "openai")  # openai | deepseek
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")

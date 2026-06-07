@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from agent_service.main import app
 from agent_service.runtime.events import extract_text_delta
-from agent_service.runtime.memory import build_agent_state, build_session_msgs
+from agent_service.runtime.memory import build_agent_state, build_session_msgs, trim_history
 from agent_service.runtime.models import build_chat_model
 from agent_service.runtime.runner import load_session_history
 from agent_service.runtime.runner import run_agent
@@ -134,9 +134,11 @@ class AgentServiceMainTests(unittest.TestCase):
         self.assertEqual(
             [payload["json"] for payload in callback_payloads],
             [
+                {"session_id": "session-2", "type": "task.status", "data": "running"},
                 {"session_id": "session-2", "type": "agent.token", "data": "hel"},
                 {"session_id": "session-2", "type": "agent.token", "data": "lo"},
                 {"session_id": "session-2", "type": "agent.done", "data": "hello"},
+                {"session_id": "session-2", "type": "task.status", "data": "completed"},
             ],
         )
 
@@ -173,45 +175,56 @@ class AgentServiceMainTests(unittest.TestCase):
         self.assertIn("authoritative", state.summary.lower())
         self.assertIn("Alpha", state.summary)
 
-    def test_load_session_history_returns_sorted_messages_for_session(self):
-        class Message:
-            def __init__(self, session_id, role, content, created_at):
-                self.session_id = session_id
-                self.role = role
-                self.content = content
-                self.created_at = created_at
+    def test_trim_history_keeps_all_system_and_latest_non_system_messages(self):
+        history = [
+            {"role": "system", "content": "system rules"},
+            {"role": "user", "content": "u1"},
+            {"role": "agent", "content": "a1"},
+            {"role": "user", "content": "u2"},
+            {"role": "agent", "content": "a2"},
+        ]
 
-        class FakeScalarResult:
-            def __init__(self, items):
-                self._items = items
+        trimmed = trim_history(history=history, max_non_system_messages=2)
 
-            def all(self):
-                return self._items
+        self.assertEqual(
+            trimmed,
+            [
+                {"role": "system", "content": "system rules"},
+                {"role": "user", "content": "u2"},
+                {"role": "agent", "content": "a2"},
+            ],
+        )
 
-        class FakeExecuteResult:
-            def __init__(self, items):
-                self._items = items
+    def test_load_session_history_fetches_messages_over_http(self):
+        calls = []
 
-            def scalars(self):
-                return FakeScalarResult(self._items)
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
 
-        class FakeSession:
+            def json(self):
+                return [
+                    {"role": "system", "content": "rules"},
+                    {"role": "user", "content": "hello"},
+                    {"role": "agent", "content": "world"},
+                    {"role": "tool", "content": "skip me"},
+                ]
+
+        class FakeClient:
             async def __aenter__(self):
                 return self
 
             async def __aexit__(self, exc_type, exc, tb):
                 return False
 
-            async def execute(self, stmt):
-                return FakeExecuteResult(
-                    [
-                        Message("session-1", "system", "rules", 1),
-                        Message("session-1", "user", "hello", 2),
-                        Message("session-1", "agent", "world", 3),
-                    ]
-                )
+            async def get(self, url):
+                calls.append(url)
+                return FakeResponse()
 
-        with patch("agent_service.runtime.runner.AsyncSessionLocal", return_value=FakeSession()):
+        with patch("agent_service.runtime.runner.httpx.AsyncClient", return_value=FakeClient()), patch(
+            "agent_service.runtime.runner.GATEWAY_MESSAGES_URL_TEMPLATE",
+            "http://localhost:8000/api/sessions/{session_id}/messages",
+        ):
             history = asyncio.run(load_session_history(session_id="session-1"))
 
         self.assertEqual(
@@ -220,6 +233,43 @@ class AgentServiceMainTests(unittest.TestCase):
                 {"role": "system", "content": "rules"},
                 {"role": "user", "content": "hello"},
                 {"role": "agent", "content": "world"},
+            ],
+        )
+        self.assertEqual(
+            calls,
+            ["http://localhost:8000/api/sessions/session-1/messages"],
+        )
+
+    def test_runner_emits_failed_status_when_history_fetch_fails(self):
+        callback_payloads = []
+
+        class FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, url, json):
+                callback_payloads.append({"url": url, "json": json})
+                return None
+
+        async def fake_load_session_history(*, session_id):
+            raise RuntimeError("history unavailable")
+
+        with patch("agent_service.runtime.runner.httpx.AsyncClient", return_value=FakeClient()), patch(
+            "agent_service.runtime.runner.load_session_history",
+            side_effect=fake_load_session_history,
+        ):
+            result = asyncio.run(run_agent(session_id="session-3", content="hello"))
+
+        self.assertEqual(result["ok"], False)
+        self.assertIn("history unavailable", result["error"])
+        self.assertEqual(
+            [payload["json"] for payload in callback_payloads],
+            [
+                {"session_id": "session-3", "type": "task.status", "data": "running"},
+                {"session_id": "session-3", "type": "task.status", "data": "failed: history unavailable"},
             ],
         )
 

@@ -3,10 +3,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from gateway.db.base import get_db
 from gateway.models.models import ProjectWorkspace, Proposal
-from gateway.schemas import ProposalCreate, ProposalOut, ProposalDiffOut
+from gateway.schemas import ProposalCreate, ProposalOut, ProposalDiffOut, WorkingCopyStatusOut
 from gateway.git import repo as git
 
 router = APIRouter(prefix="/api")
+
+
+def _translate_git_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, git.GitRepoNotInitializedError):
+        return HTTPException(400, str(exc))
+    if isinstance(exc, git.GitBranchNotFoundError):
+        return HTTPException(400, str(exc))
+    return HTTPException(500, str(exc))
 
 
 def _get_project_path(project: ProjectWorkspace) -> str:
@@ -25,18 +33,28 @@ async def init_repo(project_id: str, remote_url: str | None = None, db: AsyncSes
 
 
 @router.post("/projects/{project_id}/proposals", response_model=ProposalOut)
-async def create_proposal(project_id: str, db: AsyncSession = Depends(get_db)):
+async def create_proposal(project_id: str, body: ProposalCreate | None = None, db: AsyncSession = Depends(get_db)):
     project = await db.get(ProjectWorkspace, project_id)
     if not project:
         raise HTTPException(404, "Project not found")
-    proposal = Proposal(project_workspace_id=project_id, branch_name="")
+    local_path = _get_project_path(project)
+    try:
+        base_branch = git.resolve_base_branch(local_path, body.base_branch if body else None)
+    except Exception as exc:
+        raise _translate_git_error(exc)
+
+    proposal = Proposal(project_workspace_id=project_id, branch_name="", base_branch=base_branch)
     db.add(proposal)
     await db.flush()
-    branch = git.create_proposal_branch(_get_project_path(project), proposal.id)
-    proposal.branch_name = branch
-    await db.commit()
-    await db.refresh(proposal)
-    return proposal
+    try:
+        branch = git.create_proposal_branch(local_path, proposal.id, base_branch)
+        proposal.branch_name = branch
+        await db.commit()
+        await db.refresh(proposal)
+        return proposal
+    except Exception as exc:
+        await db.rollback()
+        raise _translate_git_error(exc)
 
 
 @router.get("/projects/{project_id}/proposals", response_model=list[ProposalOut])
@@ -53,8 +71,11 @@ async def get_diff(proposal_id: str, db: AsyncSession = Depends(get_db)):
     if not proposal:
         raise HTTPException(404, "Proposal not found")
     project = await db.get(ProjectWorkspace, proposal.project_workspace_id)
-    diff = git.get_proposal_diff(_get_project_path(project), proposal_id)
-    return diff
+    try:
+        diff = git.get_proposal_diff(_get_project_path(project), proposal_id, proposal.base_branch)
+        return diff
+    except Exception as exc:
+        raise _translate_git_error(exc)
 
 
 @router.post("/proposals/{proposal_id}/commit")
@@ -63,8 +84,24 @@ async def commit_proposal(proposal_id: str, message: str = "update", db: AsyncSe
     if not proposal:
         raise HTTPException(404, "Proposal not found")
     project = await db.get(ProjectWorkspace, proposal.project_workspace_id)
-    hexsha = git.commit_to_proposal(_get_project_path(project), proposal_id, message)
+    try:
+        hexsha = git.commit_to_proposal(_get_project_path(project), proposal_id, message)
+    except Exception as exc:
+        raise _translate_git_error(exc)
+    proposal.status = "committed"
+    await db.commit()
     return {"hexsha": hexsha}
+
+
+@router.get("/projects/{project_id}/working-copy", response_model=WorkingCopyStatusOut)
+async def get_working_copy(project_id: str, db: AsyncSession = Depends(get_db)):
+    project = await db.get(ProjectWorkspace, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    try:
+        return git.get_working_copy_status(_get_project_path(project))
+    except Exception as exc:
+        raise _translate_git_error(exc)
 
 
 @router.post("/proposals/{proposal_id}/confirm")
@@ -93,4 +130,7 @@ async def get_history(project_id: str, limit: int = 20, db: AsyncSession = Depen
     project = await db.get(ProjectWorkspace, project_id)
     if not project:
         raise HTTPException(404, "Project not found")
-    return git.get_project_history(_get_project_path(project), limit)
+    try:
+        return git.get_project_history(_get_project_path(project), limit)
+    except Exception as exc:
+        raise _translate_git_error(exc)

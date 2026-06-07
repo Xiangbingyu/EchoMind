@@ -1,0 +1,65 @@
+.messages-page {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.messages-pane {
+  position: relative;
+  flex-shrink: 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.messages-pane-left .conversation-list-container,
+.messages-pane-right .workspace-panel {
+  width: 100%;
+}
+
+.messages-pane-center {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+.messages-pane-right.collapsed {
+  overflow: hidden;
+}
+
+.panel-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.panel-resize-handle-left {
+  right: -6px;
+}
+
+.panel-resize-handle-right {
+  left: -6px;
+}
+
+.panel-resize-handle:hover,
+.panel-resize-handle:focus-visible {
+  outline: none;
+}
+
+body.is-resizing-panels {
+  cursor: col-resize;
+  user-select: none;
+}
+
+@media (max-width: 960px) {
+  .messages-pane-right {
+    display: none;
+  }
+}

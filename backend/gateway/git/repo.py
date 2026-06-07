@@ -3,6 +3,18 @@ from dataclasses import dataclass
 from git import Repo, InvalidGitRepositoryError
 
 
+class GitRepoError(Exception):
+    pass
+
+
+class GitRepoNotInitializedError(GitRepoError):
+    pass
+
+
+class GitBranchNotFoundError(GitRepoError):
+    pass
+
+
 @dataclass
 class ProposalDiff:
     proposal_id: str
@@ -31,30 +43,54 @@ def init_repository(local_path: str, remote_url: str | None = None) -> None:
 
 
 def _get_repo(local_path: str) -> Repo:
-    return Repo(local_path)
+    try:
+        return Repo(local_path)
+    except (InvalidGitRepositoryError, NoSuchPathError, FileNotFoundError):
+        raise GitRepoNotInitializedError("Repository is not initialized")
+
+
+try:
+    from git.exc import NoSuchPathError
+except ImportError:  # pragma: no cover
+    NoSuchPathError = FileNotFoundError
 
 
 def _get_base_branch(repo: Repo):
     return next((h for h in repo.heads if h.name in ("main", "master")), repo.heads[0])
 
 
-def create_proposal_branch(local_path: str, proposal_id: str) -> str:
+def resolve_base_branch(local_path: str, branch_name: str | None = None) -> str:
+    repo = _get_repo(local_path)
+    try:
+        if branch_name:
+            if branch_name not in repo.heads:
+                raise GitBranchNotFoundError(f"Base branch '{branch_name}' not found")
+            return branch_name
+        return _get_base_branch(repo).name
+    finally:
+        _close_repo(repo)
+
+
+def create_proposal_branch(local_path: str, proposal_id: str, base_branch: str) -> str:
     repo = _get_repo(local_path)
     try:
         branch_name = f"proposal/{proposal_id}"
-        repo.create_head(branch_name, _get_base_branch(repo))
+        repo.create_head(branch_name, repo.heads[base_branch])
         return branch_name
     finally:
         _close_repo(repo)
 
 
-def get_proposal_diff(local_path: str, proposal_id: str) -> ProposalDiff:
+def get_proposal_diff(local_path: str, proposal_id: str, base_branch: str) -> ProposalDiff:
     repo = _get_repo(local_path)
     try:
         branch_name = f"proposal/{proposal_id}"
+        if branch_name not in repo.heads:
+            raise GitBranchNotFoundError(f"Proposal branch '{branch_name}' not found")
         branch = repo.heads[branch_name]
-        # find merge base with main/master
-        base = _get_base_branch(repo)
+        if base_branch not in repo.heads:
+            raise GitBranchNotFoundError(f"Base branch '{base_branch}' not found")
+        base = repo.heads[base_branch]
         merge_base = repo.merge_base(base, branch)
         if not merge_base:
             return ProposalDiff(proposal_id=proposal_id, changed_files=[], patch="")
@@ -70,6 +106,8 @@ def commit_to_proposal(local_path: str, proposal_id: str, message: str) -> str:
     repo = _get_repo(local_path)
     try:
         branch_name = f"proposal/{proposal_id}"
+        if branch_name not in repo.heads:
+            raise GitBranchNotFoundError(f"Proposal branch '{branch_name}' not found")
         repo.heads[branch_name].checkout()
         repo.git.add(A=True)
         if repo.is_dirty(index=True):
