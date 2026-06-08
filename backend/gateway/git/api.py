@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,6 +9,16 @@ from gateway.schemas import ProposalCreate, ProposalOut, ProposalDiffOut, Workin
 from gateway.git import repo as git
 
 router = APIRouter(prefix="/api")
+
+
+def _resolve_project_file_path(project: ProjectWorkspace, relative_path: str | None = None) -> tuple[Path, Path]:
+    root = Path(_get_project_path(project)).resolve()
+    target = root if not relative_path else (root / relative_path).resolve()
+
+    if target != root and root not in target.parents:
+        raise HTTPException(400, "Path escapes project root")
+
+    return root, target
 
 
 def _translate_git_error(exc: Exception) -> HTTPException:
@@ -102,6 +114,49 @@ async def get_working_copy(project_id: str, db: AsyncSession = Depends(get_db)):
         return git.get_working_copy_status(_get_project_path(project))
     except Exception as exc:
         raise _translate_git_error(exc)
+
+
+@router.get("/projects/{project_id}/files/tree")
+async def get_project_files_tree(project_id: str, path: str | None = None, db: AsyncSession = Depends(get_db)):
+    project = await db.get(ProjectWorkspace, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    root, target = _resolve_project_file_path(project, path)
+    if not target.exists():
+        raise HTTPException(404, "Path not found")
+    if not target.is_dir():
+        raise HTTPException(400, "Path is not a directory")
+
+    entries = []
+    for child in sorted(target.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
+        entries.append(
+            {
+                "path": child.relative_to(root).as_posix(),
+                "type": "directory" if child.is_dir() else "file",
+            }
+        )
+    return entries
+
+
+@router.get("/projects/{project_id}/files/content")
+async def get_project_file_content(project_id: str, path: str, db: AsyncSession = Depends(get_db)):
+    project = await db.get(ProjectWorkspace, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    _, target = _resolve_project_file_path(project, path)
+    if not target.exists():
+        raise HTTPException(404, "Path not found")
+    if not target.is_file():
+        raise HTTPException(400, "Path is not a file")
+
+    try:
+        content = target.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(400, "File is not valid UTF-8 text") from exc
+
+    return {"path": path, "content": content}
 
 
 @router.post("/proposals/{proposal_id}/confirm")

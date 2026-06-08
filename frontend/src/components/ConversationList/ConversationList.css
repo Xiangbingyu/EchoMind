@@ -18,6 +18,18 @@
   margin-bottom: 16px;
 }
 
+.conversation-create-btn {
+  border: none;
+  border-radius: 999px;
+  background: #10233f;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
 .header-top h2 {
   margin: 0;
   font-size: 20px;
@@ -117,6 +129,7 @@
   cursor: pointer;
   border-radius: 6px;
   transition: background 0.2s;
+  align-items: center;
 }
 
 .conversation-item:hover {
@@ -180,4 +193,23 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.conversation-delete-btn {
+  border: none;
+  background: transparent;
+  color: #8f959e;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.conversation-delete-btn:hover:not(:disabled) {
+  background: rgba(208, 48, 80, 0.08);
+  color: #d03050;
 }

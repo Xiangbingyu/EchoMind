@@ -1,4 +1,6 @@
 import asyncio
+import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -14,6 +16,7 @@ class GatewaySessionsApiTests(unittest.TestCase):
         class FakeSessionRow:
             def __init__(self, id, type, title):
                 self.id = id
+                self.workspace_id = 'workspace-1'
                 self.project_workspace_id = 'project-1'
                 self.type = type
                 self.title = title
@@ -72,6 +75,115 @@ class GatewaySessionsApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers.get('access-control-allow-origin'), 'http://localhost:5173')
+
+    def test_delete_session_removes_existing_session(self):
+        client = TestClient(app)
+        from gateway.db.base import get_db
+
+        class FakeSession:
+            def __init__(self):
+                self.id = 'session-1'
+
+        class FakeDb:
+            def __init__(self):
+                self.deleted = None
+
+            async def get(self, model, key):
+                if key == 'session-1':
+                    return FakeSession()
+                return None
+
+            async def delete(self, value):
+                self.deleted = value.id
+
+            async def commit(self):
+                return None
+
+        db = FakeDb()
+
+        async def fake_get_db():
+            yield db
+
+        app.dependency_overrides[get_db] = fake_get_db
+        try:
+            response = client.delete('/api/sessions/session-1')
+        finally:
+            app.dependency_overrides.clear()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'ok': True})
+        self.assertEqual(db.deleted, 'session-1')
+
+    def test_project_files_tree_lists_root_entries(self):
+        client = TestClient(app)
+        from gateway.db.base import get_db
+
+        class FakeProject:
+            def __init__(self, local_path):
+                self.id = 'project-1'
+                self.local_path = local_path
+
+        class FakeDb:
+            def __init__(self, local_path):
+                self.local_path = local_path
+
+            async def get(self, model, key):
+                if key == 'project-1':
+                    return FakeProject(self.local_path)
+                return None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, 'src'))
+            with open(os.path.join(tmpdir, 'README.md'), 'w', encoding='utf-8') as handle:
+                handle.write('hello')
+
+            async def fake_get_db():
+                yield FakeDb(tmpdir)
+
+            app.dependency_overrides[get_db] = fake_get_db
+            try:
+                response = client.get('/api/projects/project-1/files/tree')
+            finally:
+                app.dependency_overrides.clear()
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(any(item['path'] == 'src' and item['type'] == 'directory' for item in payload))
+        self.assertTrue(any(item['path'] == 'README.md' and item['type'] == 'file' for item in payload))
+
+    def test_project_file_content_returns_text(self):
+        client = TestClient(app)
+        from gateway.db.base import get_db
+
+        class FakeProject:
+            def __init__(self, local_path):
+                self.id = 'project-1'
+                self.local_path = local_path
+
+        class FakeDb:
+            def __init__(self, local_path):
+                self.local_path = local_path
+
+            async def get(self, model, key):
+                if key == 'project-1':
+                    return FakeProject(self.local_path)
+                return None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, 'README.md'), 'w', encoding='utf-8') as handle:
+                handle.write('workspace docs')
+
+            async def fake_get_db():
+                yield FakeDb(tmpdir)
+
+            app.dependency_overrides[get_db] = fake_get_db
+            try:
+                response = client.get('/api/projects/project-1/files/content', params={'path': 'README.md'})
+            finally:
+                app.dependency_overrides.clear()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['content'], 'workspace docs')
 
 
 if __name__ == '__main__':

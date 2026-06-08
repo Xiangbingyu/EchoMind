@@ -1,0 +1,8 @@
+.workspace-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 28px 32px;
+  background: linear-gradient(180deg, #f5f7fb 0%, #edf2f8 100%);
+  overflow: auto;
+}

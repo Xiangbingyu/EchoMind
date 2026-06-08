@@ -1,4 +1,5 @@
-import { MessageSquare } from 'lucide-react';
+import React from 'react';
+import { FolderKanban, MessageSquare } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import './Sidebar.css';
 
@@ -18,7 +19,13 @@ export default function Sidebar() {
           <MessageSquare size={24} strokeWidth={1.5} />
           <span>消息</span>
         </NavLink>
-        {/* 这里只保留了消息，后续可以按需添加其它模块 */}
+        <NavLink 
+          to="/workspace" 
+          className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+        >
+          <FolderKanban size={24} strokeWidth={1.5} />
+          <span>Workspace</span>
+        </NavLink>
       </nav>
     </div>
   );

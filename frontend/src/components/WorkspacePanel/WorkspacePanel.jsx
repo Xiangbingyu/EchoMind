@@ -1,3 +1,4 @@
+import React from 'react';
 import './WorkspacePanel.css';
 import { ChevronLeft, ChevronRight, FolderGit2 } from 'lucide-react';
 
@@ -26,19 +27,19 @@ export default function WorkspacePanel({
         >
           {collapsed ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}
         </button>
-        {!collapsed ? <h3>工作区 (Workspace)</h3> : null}
+        {!collapsed ? <h3>运行态 (Runtime)</h3> : null}
       </div>
       {!collapsed ? (
         <div className="workspace-content">
           {!activeChat ? (
             <div className="workspace-placeholder">
               <FolderGit2 size={48} className="placeholder-icon" />
-              <p>选择一个会话后查看工作区运行态。</p>
+              <p>选择一个会话后查看当前运行态。</p>
             </div>
           ) : loading ? (
             <div className="workspace-placeholder">
               <FolderGit2 size={48} className="placeholder-icon" />
-              <p>正在加载工作区快照...</p>
+              <p>正在加载运行态快照...</p>
             </div>
           ) : (
             <>
@@ -57,14 +58,14 @@ export default function WorkspacePanel({
               </section>
 
               <section className="workspace-section">
-                <h4>Workspace</h4>
+                <h4>Binding</h4>
                 <p>Workspace ID：{workspaceSnapshot?.workspace_id || '未加载'}</p>
                 <p>Project ID：{workspaceSnapshot?.project_workspace_id || activeChat.project_workspace_id}</p>
                 <p>Root：{workspaceSnapshot?.workspace_root || '未绑定本地目录'}</p>
               </section>
 
               <section className="workspace-section">
-                <h4>Files</h4>
+                <h4>Tree</h4>
                 <p>{workspaceTree.length > 0 ? `${workspaceTree.length} 个条目` : '暂无文件树快照'}</p>
               </section>
 

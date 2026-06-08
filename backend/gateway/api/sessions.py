@@ -46,3 +46,14 @@ async def list_messages(session_id: str, db: AsyncSession = Depends(get_db)):
         select(Message).where(Message.session_id == session_id).order_by(Message.created_at)
     )
     return result.scalars().all()
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_session(session_id: str, db: AsyncSession = Depends(get_db)):
+    session = await db.get(Session, session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+
+    await db.delete(session)
+    await db.commit()
+    return {"ok": True}

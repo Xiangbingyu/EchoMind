@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import React from 'react';
+import { useEffect, useRef } from 'react';
 import { Send, Smile, Paperclip, Phone, Video, MoreHorizontal } from 'lucide-react';
 import './ChatPanel.css';
 

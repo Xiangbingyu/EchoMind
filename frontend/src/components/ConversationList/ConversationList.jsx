@@ -1,5 +1,6 @@
+import React from 'react';
 import { useState } from 'react';
-import { Search } from 'lucide-react';
+import { Plus, Search, Trash2 } from 'lucide-react';
 import './ConversationList.css';
 
 function formatSessionTime(value) {
@@ -24,7 +25,16 @@ function getSessionTitle(session) {
   return session.title || `会话 ${session.id.slice(0, 8)}`;
 }
 
-export default function ConversationList({ sessions, activeChat, onSelectChat, loading, error }) {
+export default function ConversationList({
+  sessions,
+  activeChat,
+  onSelectChat,
+  onCreateSession,
+  onDeleteSession,
+  deletingSessionId,
+  loading,
+  error,
+}) {
   const [filter, setFilter] = useState('single');
   const [keyword, setKeyword] = useState('');
 
@@ -45,6 +55,10 @@ export default function ConversationList({ sessions, activeChat, onSelectChat, l
       <div className="conversation-header">
         <div className="header-top">
           <h2>消息</h2>
+          <button type="button" className="conversation-create-btn" onClick={onCreateSession}>
+            <Plus size={16} />
+            新建 Session
+          </button>
         </div>
 
         <div className="search-bar">
@@ -97,6 +111,18 @@ export default function ConversationList({ sessions, activeChat, onSelectChat, l
                   </div>
                   <div className="info-bottom">{chat.type === 'single' ? '单聊会话' : '群聊会话'}</div>
                 </div>
+                <button
+                  type="button"
+                  className="conversation-delete-btn"
+                  aria-label={`删除 ${getSessionTitle(chat)}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDeleteSession(chat.id);
+                  }}
+                  disabled={deletingSessionId === chat.id}
+                >
+                  <Trash2 size={16} />
+                </button>
               </div>
             ))
           : null}

@@ -1,10 +1,12 @@
+import React from 'react';
 import { useEffect, useRef, useState } from 'react';
 import ConversationList from '../../components/ConversationList/ConversationList';
 import ChatPanel from '../../components/ChatPanel/ChatPanel';
+import SessionCreateDialog from '../../components/SessionCreateDialog/SessionCreateDialog';
 import WorkspacePanel from '../../components/WorkspacePanel/WorkspacePanel';
+import { API_BASE_URL, createWsUrl, fetchJson } from '../../utils/api';
 import './Messages.css';
 
-const API_BASE_URL = 'http://localhost:8000';
 const LEFT_PANEL_INITIAL_WIDTH = 320;
 const LEFT_PANEL_MIN_WIDTH = 260;
 const LEFT_PANEL_MAX_WIDTH = 520;
@@ -46,10 +48,33 @@ export default function Messages() {
   const [leftPanelWidth, setLeftPanelWidth] = useState(LEFT_PANEL_INITIAL_WIDTH);
   const [rightPanelWidth, setRightPanelWidth] = useState(RIGHT_PANEL_INITIAL_WIDTH);
   const [workspaceCollapsed, setWorkspaceCollapsed] = useState(false);
+  const [workspaceOptions, setWorkspaceOptions] = useState([]);
+  const [projectWorkspaceOptions, setProjectWorkspaceOptions] = useState({});
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [creatingSession, setCreatingSession] = useState(false);
+  const [deletingSessionId, setDeletingSessionId] = useState('');
+  const [sessionDialogKey, setSessionDialogKey] = useState(0);
   const containerRef = useRef(null);
   const socketRef = useRef(null);
   const streamMessageIdRef = useRef(null);
   const sessionGenerationRef = useRef(0);
+
+  function resetSessionViewState() {
+    setChatMessages([]);
+    setChatLoading(false);
+    setChatStatus('');
+    setTaskState('');
+    setChatError('');
+    setSending(false);
+    setWorkspaceSnapshot(null);
+    setWorkspaceLoading(false);
+    setWorkspaceTree([]);
+    setPlanState([]);
+    setSandboxState({ status: 'idle' });
+    setAgentState({ status: 'idle', last_error: '' });
+    setWorkspaceError('');
+    streamMessageIdRef.current = null;
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -74,13 +99,18 @@ export default function Messages() {
           if (current && data.some((session) => session.id === current.id)) {
             return current;
           }
-          return data[0] ?? null;
+          const nextActiveChat = data[0] ?? null;
+          if (!nextActiveChat) {
+            resetSessionViewState();
+          }
+          return nextActiveChat;
         });
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : 'Failed to load sessions');
           setSessions([]);
           setActiveChat(null);
+          resetSessionViewState();
         }
       } finally {
         if (!cancelled) {
@@ -98,19 +128,6 @@ export default function Messages() {
 
   useEffect(() => {
     if (!activeChat) {
-      setChatMessages([]);
-      setChatLoading(false);
-      setChatStatus('');
-      setTaskState('');
-      setChatError('');
-      setSending(false);
-      setWorkspaceSnapshot(null);
-      setWorkspaceTree([]);
-      setPlanState([]);
-      setSandboxState({ status: 'idle' });
-      setAgentState({ status: 'idle', last_error: '' });
-      setWorkspaceError('');
-      streamMessageIdRef.current = null;
       return undefined;
     }
 
@@ -173,7 +190,7 @@ export default function Messages() {
           return;
         }
 
-        const wsUrl = `${API_BASE_URL.replace('http', 'ws')}/ws/session/${activeChat.id}`;
+        const wsUrl = createWsUrl(`/ws/session/${activeChat.id}`);
         const ws = new WebSocket(wsUrl);
         socketRef.current = ws;
 
@@ -332,6 +349,93 @@ export default function Messages() {
     setInputValue('');
   }
 
+  async function handleOpenCreateDialog() {
+    setSessionDialogKey((current) => current + 1);
+    setCreateDialogOpen(true);
+
+    if (workspaceOptions.length > 0) {
+      return;
+    }
+
+    try {
+      const workspaces = await fetchJson('/api/workspaces');
+      setWorkspaceOptions(workspaces);
+      const entries = await Promise.all(
+        workspaces.map(async (workspace) => [workspace.id, await fetchJson(`/api/workspaces/${workspace.id}/projects`)]),
+      );
+      setProjectWorkspaceOptions(Object.fromEntries(entries));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load workspaces');
+    }
+  }
+
+  async function handleCreateSession(payload) {
+    setCreatingSession(true);
+    setError('');
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: payload.title,
+          type: 'single',
+          workspace_id: payload.workspace_id,
+          project_workspace_id: payload.project_workspace_id,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to create session: ${response.status}`);
+      }
+
+      const createdSession = await response.json();
+      setSessions((current) => [createdSession, ...current]);
+      setActiveChat(createdSession);
+      setCreateDialogOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create session');
+    } finally {
+      setCreatingSession(false);
+    }
+  }
+
+  async function handleDeleteSession(sessionId) {
+    const target = sessions.find((session) => session.id === sessionId);
+    if (!target) {
+      return;
+    }
+
+    const title = target.title || `会话 ${target.id.slice(0, 8)}`;
+    const confirmed = window.confirm(`删除会话“${title}”后，消息历史将被清空，但不会影响任何 workspace 资源。`);
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingSessionId(sessionId);
+    setError('');
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}`, { method: 'DELETE' });
+      if (!response.ok) {
+        throw new Error(`Failed to delete session: ${response.status}`);
+      }
+
+      const nextSessions = sessions.filter((session) => session.id !== sessionId);
+      setSessions(nextSessions);
+      if (activeChat?.id === sessionId) {
+        setActiveChat(nextSessions[0] ?? null);
+        if (nextSessions.length === 0) {
+          resetSessionViewState();
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete session');
+    } finally {
+      setDeletingSessionId('');
+    }
+  }
+
   function clampWidth(value, min, max) {
     const safeMax = Math.max(min, max);
     return Math.min(Math.max(value, min), safeMax);
@@ -395,6 +499,9 @@ export default function Messages() {
           sessions={sessions}
           activeChat={activeChat}
           onSelectChat={setActiveChat}
+          onCreateSession={handleOpenCreateDialog}
+          onDeleteSession={handleDeleteSession}
+          deletingSessionId={deletingSessionId}
           loading={loading}
           error={error}
         />
@@ -446,6 +553,16 @@ export default function Messages() {
           />
         ) : null}
       </div>
+
+      <SessionCreateDialog
+        key={sessionDialogKey}
+        open={createDialogOpen}
+        workspaces={workspaceOptions}
+        projectWorkspaces={projectWorkspaceOptions}
+        onClose={() => setCreateDialogOpen(false)}
+        onSubmit={handleCreateSession}
+        loading={creatingSession}
+      />
     </div>
   );
 }
