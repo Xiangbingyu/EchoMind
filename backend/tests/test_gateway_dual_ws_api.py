@@ -229,8 +229,7 @@ class ProjectLookupTests(unittest.TestCase):
                 self.id = 'project-1'
                 self.workspace_id = 'workspace-1'
                 self.name = 'Project One'
-                self.local_path = 'E:/repo/project-one'
-                self.remote_path = None
+                self.path = 'E:/repo/project-one'
                 self.created_at = datetime.now(UTC)
 
         class FakeDb:
@@ -280,6 +279,101 @@ class SessionWorkspaceBackfillTests(unittest.TestCase):
             asyncio.run(init_module._backfill_session_workspace_ids())
 
         self.assertTrue(any('UPDATE session' in stmt for stmt in statements), statements)
+
+    def test_cleanup_invalid_workspaces_removes_rows_without_endpoint(self):
+        from gateway.db import init as init_module
+
+        statements = []
+
+        class FakeResult:
+            def fetchall(self):
+                return []
+
+        class FakeConn:
+            async def execute(self, stmt):
+                statements.append(str(stmt))
+                return FakeResult()
+
+        class FakeBegin:
+            async def __aenter__(self):
+                return FakeConn()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class FakeEngine:
+            def begin(self):
+                return FakeBegin()
+
+        with patch.object(init_module, 'engine', FakeEngine()):
+            asyncio.run(init_module._cleanup_invalid_workspaces())
+
+        self.assertTrue(any('DELETE FROM session' in stmt for stmt in statements), statements)
+        self.assertTrue(any('DELETE FROM project_workspace' in stmt for stmt in statements), statements)
+        self.assertTrue(any('DELETE FROM workspace' in stmt for stmt in statements), statements)
+        self.assertTrue(any('endpoint IS NULL' in stmt for stmt in statements), statements)
+
+    def test_ensure_project_path_column_backfills_from_legacy_fields(self):
+        from gateway.db import init as init_module
+
+        statements = []
+
+        class FakeResult:
+            def fetchall(self):
+                return [(0, 'id'), (1, 'workspace_id'), (2, 'name'), (3, 'local_path'), (4, 'remote_path')]
+
+        class FakeConn:
+            async def execute(self, stmt):
+                statements.append(str(stmt))
+                return FakeResult()
+
+        class FakeBegin:
+            async def __aenter__(self):
+                return FakeConn()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class FakeEngine:
+            def begin(self):
+                return FakeBegin()
+
+        with patch.object(init_module, 'engine', FakeEngine()):
+            asyncio.run(init_module._ensure_project_path_column())
+
+        self.assertTrue(any('ALTER TABLE project_workspace ADD COLUMN path' in stmt for stmt in statements), statements)
+        self.assertTrue(any('COALESCE(local_path, remote_path' in stmt for stmt in statements), statements)
+
+    def test_ensure_workspace_is_remote_defaults_to_zero(self):
+        from gateway.db import init as init_module
+
+        statements = []
+
+        class FakeResult:
+            def fetchall(self):
+                return [(0, 'id'), (1, 'name'), (2, 'endpoint'), (3, 'is_remote')]
+
+        class FakeConn:
+            async def execute(self, stmt):
+                statements.append(str(stmt))
+                return FakeResult()
+
+        class FakeBegin:
+            async def __aenter__(self):
+                return FakeConn()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class FakeEngine:
+            def begin(self):
+                return FakeBegin()
+
+        with patch.object(init_module, 'engine', FakeEngine()):
+            asyncio.run(init_module._ensure_workspace_is_remote_column())
+
+        self.assertTrue(any('UPDATE workspace' in stmt for stmt in statements), statements)
+        self.assertTrue(any('SET is_remote = 0' in stmt for stmt in statements), statements)
 
 
 class WebsocketDisconnectTests(unittest.TestCase):

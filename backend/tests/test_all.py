@@ -44,7 +44,7 @@ async def test_health():
 async def test_rest() -> tuple[str, str, str]:
     print("\n=== REST API ===")
     async with httpx.AsyncClient() as c:
-        r = await c.post(f"{BASE}/api/workspaces", json={"name": "测试工作区"})
+        r = await c.post(f"{BASE}/api/workspaces", json={"name": "测试工作区", "endpoint": "local://echo"})
         check("POST /api/workspaces 200", r.status_code == 200)
         ws_id = r.json()["id"]
         check("workspace has id", bool(ws_id))
@@ -52,7 +52,7 @@ async def test_rest() -> tuple[str, str, str]:
         r = await c.get(f"{BASE}/api/workspaces")
         check("GET /api/workspaces returns list", isinstance(r.json(), list))
 
-        r = await c.post(f"{BASE}/api/workspaces/{ws_id}/projects", json={"name": "proj1"})
+        r = await c.post(f"{BASE}/api/workspaces/{ws_id}/projects", json={"name": "proj1", "path": "E:/repo/proj1"})
         check("POST /api/workspaces/{id}/projects 200", r.status_code == 200)
         proj_id = r.json()["id"]
 

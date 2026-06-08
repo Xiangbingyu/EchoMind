@@ -308,8 +308,7 @@ class AgentServiceMainTests(unittest.TestCase):
                     "id": "project-1",
                     "workspace_id": "workspace-1",
                     "name": "Project One",
-                    "local_path": "E:/repo/project-one",
-                    "remote_path": None,
+                    "path": "E:/repo/project-one",
                 }
 
         class FakeClient:
@@ -329,7 +328,7 @@ class AgentServiceMainTests(unittest.TestCase):
         ):
             snapshot = asyncio.run(load_project_snapshot(project_id="project-1"))
 
-        self.assertEqual(snapshot["local_path"], "E:/repo/project-one")
+        self.assertEqual(snapshot["path"], "E:/repo/project-one")
         self.assertEqual(calls, ["http://localhost:8000/api/projects/project-1"])
 
     def test_runtime_manager_reuses_session_runtime(self):

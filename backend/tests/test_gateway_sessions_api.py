@@ -114,22 +114,180 @@ class GatewaySessionsApiTests(unittest.TestCase):
         self.assertEqual(response.json(), {'ok': True})
         self.assertEqual(db.deleted, 'session-1')
 
+    def test_project_payload_uses_unified_path_field(self):
+        client = TestClient(app)
+        from gateway.db.base import get_db
+
+        class FakeProject:
+            def __init__(self):
+                self.id = 'project-1'
+                self.workspace_id = 'workspace-1'
+                self.name = 'frontend'
+                self.path = '/repo/frontend'
+                self.created_at = '2026-06-08T00:00:00'
+
+        class FakeDb:
+            async def get(self, model, key):
+                if key == 'project-1':
+                    return FakeProject()
+                return None
+
+        async def fake_get_db():
+            yield FakeDb()
+
+        app.dependency_overrides[get_db] = fake_get_db
+        try:
+            response = client.get('/api/projects/project-1')
+        finally:
+            app.dependency_overrides.clear()
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload['path'], '/repo/frontend')
+        self.assertNotIn('local_path', payload)
+        self.assertNotIn('remote_path', payload)
+
+    def test_delete_project_removes_related_sessions(self):
+        client = TestClient(app)
+        from gateway.db.base import get_db
+
+        class FakeProject:
+            def __init__(self):
+                self.id = 'project-1'
+                self.workspace_id = 'workspace-1'
+
+        class FakeSessionRow:
+            def __init__(self, session_id):
+                self.id = session_id
+
+        class FakeScalarResult:
+            def __init__(self, items):
+                self._items = items
+
+            def all(self):
+                return self._items
+
+        class FakeExecuteResult:
+            def __init__(self, items):
+                self._items = items
+
+            def scalars(self):
+                return FakeScalarResult(self._items)
+
+        class FakeDb:
+            def __init__(self):
+                self.deleted = []
+
+            async def get(self, model, key):
+                if key == 'project-1':
+                    return FakeProject()
+                return None
+
+            async def execute(self, stmt):
+                return FakeExecuteResult([FakeSessionRow('session-a'), FakeSessionRow('session-b')])
+
+            async def delete(self, value):
+                self.deleted.append(value.id)
+
+            async def commit(self):
+                return None
+
+        db = FakeDb()
+
+        async def fake_get_db():
+            yield db
+
+        app.dependency_overrides[get_db] = fake_get_db
+        try:
+            response = client.delete('/api/projects/project-1')
+        finally:
+            app.dependency_overrides.clear()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(db.deleted, ['session-a', 'session-b', 'project-1'])
+
+    def test_delete_workspace_removes_projects_and_related_sessions(self):
+        client = TestClient(app)
+        from gateway.db.base import get_db
+
+        class FakeWorkspace:
+            def __init__(self):
+                self.id = 'workspace-1'
+
+        class FakeProject:
+            def __init__(self, project_id):
+                self.id = project_id
+
+        class FakeSessionRow:
+            def __init__(self, session_id):
+                self.id = session_id
+
+        class FakeScalarResult:
+            def __init__(self, items):
+                self._items = items
+
+            def all(self):
+                return self._items
+
+        class FakeExecuteResult:
+            def __init__(self, items):
+                self._items = items
+
+            def scalars(self):
+                return FakeScalarResult(self._items)
+
+        class FakeDb:
+            def __init__(self):
+                self.deleted = []
+                self.execute_count = 0
+
+            async def get(self, model, key):
+                if key == 'workspace-1':
+                    return FakeWorkspace()
+                return None
+
+            async def execute(self, stmt):
+                self.execute_count += 1
+                if self.execute_count == 1:
+                    return FakeExecuteResult([FakeProject('project-1'), FakeProject('project-2')])
+                return FakeExecuteResult([FakeSessionRow('session-a'), FakeSessionRow('session-b')])
+
+            async def delete(self, value):
+                self.deleted.append(value.id)
+
+            async def commit(self):
+                return None
+
+        db = FakeDb()
+
+        async def fake_get_db():
+            yield db
+
+        app.dependency_overrides[get_db] = fake_get_db
+        try:
+            response = client.delete('/api/workspaces/workspace-1')
+        finally:
+            app.dependency_overrides.clear()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(db.deleted, ['session-a', 'session-b', 'project-1', 'project-2', 'workspace-1'])
+
     def test_project_files_tree_lists_root_entries(self):
         client = TestClient(app)
         from gateway.db.base import get_db
 
         class FakeProject:
-            def __init__(self, local_path):
+            def __init__(self, path):
                 self.id = 'project-1'
-                self.local_path = local_path
+                self.path = path
 
         class FakeDb:
-            def __init__(self, local_path):
-                self.local_path = local_path
+            def __init__(self, path):
+                self.path = path
 
             async def get(self, model, key):
                 if key == 'project-1':
-                    return FakeProject(self.local_path)
+                    return FakeProject(self.path)
                 return None
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -156,17 +314,17 @@ class GatewaySessionsApiTests(unittest.TestCase):
         from gateway.db.base import get_db
 
         class FakeProject:
-            def __init__(self, local_path):
+            def __init__(self, path):
                 self.id = 'project-1'
-                self.local_path = local_path
+                self.path = path
 
         class FakeDb:
-            def __init__(self, local_path):
-                self.local_path = local_path
+            def __init__(self, path):
+                self.path = path
 
             async def get(self, model, key):
                 if key == 'project-1':
-                    return FakeProject(self.local_path)
+                    return FakeProject(self.path)
                 return None
 
         with tempfile.TemporaryDirectory() as tmpdir:

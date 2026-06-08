@@ -30,8 +30,7 @@ class ProjectWorkspace(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id"), nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
-    local_path: Mapped[str | None] = mapped_column(String, nullable=True)
-    remote_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    path: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

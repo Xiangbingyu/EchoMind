@@ -18,41 +18,179 @@ const projectsByWorkspace = {
     {
       id: 'pw-1',
       name: 'frontend',
-      local_path: 'E:/Github/EchoMind/frontend',
+      path: 'E:/Github/EchoMind/frontend',
       created_at: '2026-06-08T08:30:00Z',
     },
     {
       id: 'pw-2',
       name: 'backend',
-      local_path: 'E:/Github/EchoMind/backend',
+      path: 'E:/Github/EchoMind/backend',
       created_at: '2026-06-08T08:10:00Z',
     },
   ],
 };
 
 const fileTree = [
-  { path: 'src', type: 'directory' },
-  { path: 'src/App.jsx', type: 'file' },
+  {
+    path: 'src',
+    name: 'src',
+    type: 'directory',
+    children: [
+      {
+        path: 'src/App.jsx',
+        name: 'App.jsx',
+        type: 'file',
+        children: [],
+      },
+    ],
+  },
 ];
 
 describe('WorkspaceBrowser', () => {
-  it('shows workspace cards first and opens a workspace detail view', async () => {
+  it('renders a single-page explorer layout and lets users open files from the tree', async () => {
     const user = userEvent.setup();
+    const onFileSelect = vi.fn();
 
     render(
       <WorkspaceBrowser
+        activeWorkspace={workspaces[0]}
+        activeProject={projectsByWorkspace['ws-1'][0]}
         workspaces={workspaces}
         projectsByWorkspace={projectsByWorkspace}
+        selectedWorkspaceId="ws-1"
         selectedProjectId="pw-1"
+        selectedFilePath=""
+        onWorkspaceSelect={() => {}}
+        onProjectSelect={() => {}}
+        onFileSelect={onFileSelect}
         fileTree={fileTree}
+        fileTreeLoading={false}
+        fileTreeError=""
         fileContent={'export default function App() {}'}
+        fileContentLoading={false}
+        fileContentError=""
+        onCreateWorkspace={() => {}}
+        loading={false}
+        error=""
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: /EchoMind Core/i }));
+    expect(screen.getByRole('heading', { name: 'Workspace' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'frontend' })).toBeInTheDocument();
 
-    expect(screen.getByRole('heading', { name: 'EchoMind Core' })).toBeInTheDocument();
-    expect(screen.getByText('frontend')).toBeInTheDocument();
-    expect(screen.getByText('src/App.jsx')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'src' }));
+    await user.click(screen.getByRole('button', { name: 'App.jsx' }));
+
+    expect(onFileSelect).toHaveBeenCalledWith('src/App.jsx');
+  });
+
+  it('shows create project and delete actions in the explorer', () => {
+    render(
+      <WorkspaceBrowser
+        activeWorkspace={workspaces[0]}
+        activeProject={projectsByWorkspace['ws-1'][0]}
+        workspaces={workspaces}
+        projectsByWorkspace={projectsByWorkspace}
+        selectedWorkspaceId="ws-1"
+        selectedProjectId="pw-1"
+        selectedFilePath=""
+        onWorkspaceSelect={() => {}}
+        onProjectSelect={() => {}}
+        onFileSelect={() => {}}
+        onCreateWorkspace={() => {}}
+        onCreateProject={() => {}}
+        onDeleteWorkspace={() => {}}
+        onDeleteProject={() => {}}
+        fileTree={fileTree}
+        fileTreeLoading={false}
+        fileTreeError=""
+        fileContent={'export default function App() {}'}
+        fileContentLoading={false}
+        fileContentError=""
+        loading={false}
+        error=""
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: '新建' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '新建 Project' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '删除 Workspace' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: '删除 Project' }).length).toBeGreaterThan(0);
+  });
+
+  it('calls delete handlers for workspace and project actions', async () => {
+    const user = userEvent.setup();
+    const onDeleteWorkspace = vi.fn();
+    const onDeleteProject = vi.fn();
+
+    render(
+      <WorkspaceBrowser
+        activeWorkspace={workspaces[0]}
+        activeProject={projectsByWorkspace['ws-1'][0]}
+        workspaces={workspaces}
+        projectsByWorkspace={projectsByWorkspace}
+        selectedWorkspaceId="ws-1"
+        selectedProjectId="pw-1"
+        selectedFilePath=""
+        onWorkspaceSelect={() => {}}
+        onProjectSelect={() => {}}
+        onFileSelect={() => {}}
+        onCreateWorkspace={() => {}}
+        onCreateProject={() => {}}
+        onDeleteWorkspace={onDeleteWorkspace}
+        onDeleteProject={onDeleteProject}
+        fileTree={fileTree}
+        fileTreeLoading={false}
+        fileTreeError=""
+        fileContent={'export default function App() {}'}
+        fileContentLoading={false}
+        fileContentError=""
+        loading={false}
+        error=""
+      />,
+    );
+
+    await user.click(screen.getAllByRole('button', { name: '删除 Workspace' })[0]);
+    await user.click(screen.getAllByRole('button', { name: '删除 Project' })[0]);
+
+    expect(onDeleteWorkspace).toHaveBeenCalledWith('ws-1');
+    expect(onDeleteProject).toHaveBeenCalledWith('pw-1');
+  });
+
+  it('calls the refresh handler for the selected project', async () => {
+    const user = userEvent.setup();
+    const onRefreshProject = vi.fn();
+
+    render(
+      <WorkspaceBrowser
+        activeWorkspace={workspaces[0]}
+        activeProject={projectsByWorkspace['ws-1'][0]}
+        workspaces={workspaces}
+        projectsByWorkspace={projectsByWorkspace}
+        selectedWorkspaceId="ws-1"
+        selectedProjectId="pw-1"
+        selectedFilePath=""
+        onWorkspaceSelect={() => {}}
+        onProjectSelect={() => {}}
+        onFileSelect={() => {}}
+        onCreateWorkspace={() => {}}
+        onCreateProject={() => {}}
+        onDeleteWorkspace={() => {}}
+        onDeleteProject={() => {}}
+        onRefreshProject={onRefreshProject}
+        fileTree={fileTree}
+        fileTreeLoading={false}
+        fileTreeError=""
+        fileContent={'export default function App() {}'}
+        fileContentLoading={false}
+        fileContentError=""
+        loading={false}
+        error=""
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: '刷新文件树' }));
+
+    expect(onRefreshProject).toHaveBeenCalledWith('pw-1');
   });
 });

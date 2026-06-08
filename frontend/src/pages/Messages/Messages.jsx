@@ -183,7 +183,7 @@ export default function Messages() {
         setWorkspaceSnapshot({
           workspace_id: sessionData.workspace_id,
           project_workspace_id: sessionData.project_workspace_id,
-          workspace_root: projectData.local_path || '',
+          workspace_root: projectData.path || '',
         });
 
         if (cancelled || generation !== sessionGenerationRef.current) {

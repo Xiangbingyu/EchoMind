@@ -58,7 +58,7 @@ async def ensure_session_runtime(*, session_id: str):
         session_id=session_id,
         workspace_id=session_snapshot['workspace_id'],
         project_workspace_id=session_snapshot['project_workspace_id'],
-        workspace_root=project_snapshot.get('local_path') or '',
+        workspace_root=project_snapshot.get('path') or '',
     )
 
 

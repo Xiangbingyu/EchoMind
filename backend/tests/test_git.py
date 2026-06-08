@@ -27,16 +27,16 @@ async def main():
 
         async with httpx.AsyncClient() as c:
             # 创建 workspace + project
-            ws = await c.post(f"{BASE}/api/workspaces", json={"name": "git-test"})
+            ws = await c.post(f"{BASE}/api/workspaces", json={"name": "git-test", "endpoint": "local://git"})
             ws_id = ws.json()["id"]
 
             proj = await c.post(f"{BASE}/api/workspaces/{ws_id}/projects", json={
-                "name": "git-proj", "local_path": repo_path
+                "name": "git-proj", "path": repo_path
             })
             proj_id = proj.json()["id"]
 
             missing_proj = await c.post(f"{BASE}/api/workspaces/{ws_id}/projects", json={
-                "name": "git-missing-repo", "local_path": missing_repo_path
+                "name": "git-missing-repo", "path": missing_repo_path
             })
             missing_proj_id = missing_proj.json()["id"]
 

@@ -16,6 +16,6 @@ describe('App routes', () => {
 
     await user.click(screen.getByRole('link', { name: 'Workspace' }));
 
-    expect(screen.getByRole('heading', { name: '全部 Workspace' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Workspace' })).toBeInTheDocument();
   });
 });

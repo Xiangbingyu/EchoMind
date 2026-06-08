@@ -4,8 +4,7 @@ from datetime import datetime
 
 class WorkspaceCreate(BaseModel):
     name: str
-    endpoint: str | None = None
-    is_remote: bool = False
+    endpoint: str
     config_json: str | None = None
 
 
@@ -17,8 +16,7 @@ class WorkspaceOut(WorkspaceCreate):
 
 class ProjectCreate(BaseModel):
     name: str
-    local_path: str | None = None
-    remote_path: str | None = None
+    path: str
 
 
 class ProjectOut(ProjectCreate):

@@ -30,9 +30,9 @@ def _translate_git_error(exc: Exception) -> HTTPException:
 
 
 def _get_project_path(project: ProjectWorkspace) -> str:
-    if not project.local_path:
-        raise HTTPException(400, "Project has no local_path")
-    return project.local_path
+    if not project.path:
+        raise HTTPException(400, "Project has no path")
+    return project.path
 
 
 @router.post("/projects/{project_id}/repo/init")
@@ -40,7 +40,7 @@ async def init_repo(project_id: str, remote_url: str | None = None, db: AsyncSes
     project = await db.get(ProjectWorkspace, project_id)
     if not project:
         raise HTTPException(404, "Project not found")
-    git.init_repository(project.local_path, remote_url)
+    git.init_repository(_get_project_path(project), remote_url)
     return {"ok": True}
 
 

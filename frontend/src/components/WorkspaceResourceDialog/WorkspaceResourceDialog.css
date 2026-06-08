@@ -1,0 +1,78 @@
+.workspace-resource-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(16, 35, 63, 0.32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 60;
+}
+
+.workspace-resource-dialog {
+  width: min(480px, 100%);
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgba(16, 35, 63, 0.24);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.workspace-resource-dialog h3 {
+  margin: 0;
+  font-size: 20px;
+  color: #10233f;
+}
+
+.workspace-resource-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #314866;
+  font-size: 14px;
+}
+
+.workspace-resource-field input {
+  border: 1px solid #c8d4e3;
+  border-radius: 14px;
+  padding: 12px 14px;
+  font: inherit;
+}
+
+.workspace-resource-hint {
+  margin: -4px 0 0;
+  color: #5f6f84;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.workspace-resource-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.workspace-resource-ghost-btn,
+.workspace-resource-primary-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 10px 16px;
+  cursor: pointer;
+}
+
+.workspace-resource-ghost-btn {
+  background: #eef3f8;
+  color: #314866;
+}
+
+.workspace-resource-primary-btn {
+  background: #10233f;
+  color: #fff;
+}
+
+.workspace-resource-primary-btn:disabled {
+  background: #aab9cf;
+  cursor: not-allowed;
+}
